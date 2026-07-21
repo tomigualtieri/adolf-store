@@ -12,7 +12,7 @@ import { supabase } from "./supabaseClient";
    ============================================================ */
 const CONFIG = {
   storeName: "ADOLF",
-  tagline: "Prendas de punto y tejido, una por una",
+  tagline: "Estilo que habla por vos.",
   whatsappNumber: "5492213081481",
   bank: {
     titular: "Juliana Garavaglia",
@@ -30,19 +30,6 @@ const CONFIG = {
   heroVideo: "/videos/hero.mp4",
   textureVideo: "/videos/texture.mp4",
 };
-
-/* Textos de ejemplo — editables, no son datos reales del negocio */
-const BENEFITS = [
-  { icon: "truck", title: "Envíos a todo el país", text: "Coordinado a domicilio o por correo" },
-  { icon: "refresh", title: "Cambios dentro de los 7 días de la compra", text: "Fácil y sin vueltas" },
-  { icon: "heart", title: "Hecho con dedicación", text: "Cada prenda, pieza por pieza" },
-];
-
-/* Bloques editoriales entre categorías — editables */
-const EDITORIAL = [
-  { phrase: "Nueva colección", sub: "Descubrí las últimas novedades" },
-  { phrase: "Para todos los días", sub: "Prendas simples y cómodas, pensadas para acompañarte" },
-];
 
 const COLOR_HEX = {
   "Bordó": "#7B2D2A",
@@ -115,13 +102,66 @@ async function seedProducts() {
   if (error) throw error;
   return data || [];
 }
-/* ---------- Supabase: imágenes ---------- */
+/* ---------- Supabase: imágenes y videos ---------- */
 async function uploadImage(file) {
   const path = `${Date.now()}-${Math.random().toString(36).slice(2)}-${file.name}`;
   const { error } = await supabase.storage.from("product-images").upload(path, file);
   if (error) throw error;
   const { data } = supabase.storage.from("product-images").getPublicUrl(path);
   return data.publicUrl;
+}
+
+/* ============================================================
+   CONTENIDO EDITABLE DEL SITIO — textos, fotos y videos que se
+   pueden cambiar desde el panel de administración sin tocar código.
+   Si todavía no existe la tabla "site_settings" en Supabase, o está
+   vacía, se usan estos valores por defecto.
+   ============================================================ */
+const DEFAULT_CONTENT = {
+  heroVideo: "/videos/hero.mp4",
+  heroEyebrow: "Colección de temporada",
+  heroTitle: "Estilo que habla por vos.",
+  heroSubtitle: "Diseños seleccionados para acompañarte todos los días.",
+  heroCta: "Ver colección",
+  stripTitle: "Hecho para durar",
+  stripText: "Cada detalle hace la diferencia.",
+  discoverImage: "",
+  discoverEyebrow: "Colección 26",
+  discoverTitle: "Nueva colección",
+  discoverText: "Diseñada para moverse con vos. Esencial, atemporal, ADOLF.",
+  discoverCta: "Descubrí la colección",
+  categoriesEyebrow: "Explorá",
+  categoriesTitle: "Nuestras categorías",
+  categoryImages: {},
+  textureVideo: "/videos/texture.mp4",
+  textureEyebrow: "Materiales",
+  textureTitle: "Texturas que se sienten",
+  institutionalEyebrow: "ADOLF",
+  institutionalTitle: "Cada prenda, pensada para vos",
+  institutionalText: "Elegimos materiales lindos y cuidamos cada detalle, para que tengas prendas que uses temporada tras temporada.",
+  marqueeTitle: "Para todos los días",
+  marqueeText: "Prendas simples y cómodas, pensadas para acompañarte",
+  benefits: [
+    { title: "Envíos a todo el país", text: "Enviamos a todo el país de forma rápida y segura" },
+    { title: "Cambios sin complicaciones", text: "Cambios dentro de los 7 días posteriores a la compra" },
+    { title: "Hecho con dedicación", text: "Cada prenda, pieza por pieza" },
+  ],
+  footerTagline: "Estilo que habla por vos.",
+};
+
+async function fetchSiteContent() {
+  try {
+    const { data, error } = await supabase.from("site_settings").select("data").eq("id", 1).maybeSingle();
+    if (error) throw error;
+    return data?.data || {};
+  } catch {
+    // La tabla "site_settings" todavía no existe en Supabase: se usan los valores por defecto.
+    return {};
+  }
+}
+async function saveSiteContent(content) {
+  const { error } = await supabase.from("site_settings").upsert({ id: 1, data: content });
+  if (error) throw error;
 }
 
 /* ============================================================
@@ -441,7 +481,176 @@ function ProductRow({ product, onSave, onDelete }) {
   );
 }
 
-function AdminPage({ products, setProducts, onExit }) {
+function MediaField({ label, value, onChange, video = false, hint }) {
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setUploading(true);
+    try {
+      const url = await uploadImage(file);
+      onChange(url);
+    } catch (err) {
+      alert("No se pudo subir el archivo: " + err.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div className="content-field content-field-media">
+      <label>{label}</label>
+      {hint && <p className="content-hint">{hint}</p>}
+      <div className="content-media-preview">
+        {value ? (
+          video ? <video src={value} muted loop playsInline autoPlay /> : <img src={value} alt="" />
+        ) : (
+          <span className="content-media-empty">Sin archivo — se usa el valor por defecto del sitio</span>
+        )}
+      </div>
+      <div className="content-media-actions">
+        <button type="button" className="admin-save" disabled={uploading} onClick={() => fileRef.current?.click()}>
+          {uploading ? "Subiendo…" : value ? "Reemplazar" : "Subir"}
+        </button>
+        {value && <button type="button" className="admin-del" onClick={() => onChange("")}>Quitar</button>}
+      </div>
+      <input type="file" accept={video ? "video/*" : "image/*"} ref={fileRef} style={{ display: "none" }} onChange={handleFile} />
+    </div>
+  );
+}
+
+function SiteContentEditor({ content, categories, onSave }) {
+  const [form, setForm] = useState(content);
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState(null);
+
+  useEffect(() => { setForm(content); }, [content]);
+
+  const update = (field, value) => { setForm((f) => ({ ...f, [field]: value })); setMsg(null); };
+  const updateBenefit = (i, field, value) => {
+    setForm((f) => ({ ...f, benefits: f.benefits.map((b, ix) => (ix === i ? { ...b, [field]: value } : b)) }));
+    setMsg(null);
+  };
+  const updateCategoryImage = (cat, url) => {
+    setForm((f) => ({ ...f, categoryImages: { ...f.categoryImages, [cat]: url } }));
+    setMsg(null);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setMsg(null);
+    try {
+      await onSave(form);
+      setMsg("ok");
+    } catch (err) {
+      setMsg("No se pudo guardar: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const BENEFIT_LABELS = ["🚚 Beneficio 1 — envíos", "🔄 Beneficio 2 — cambios", "❤️ Beneficio 3 — dedicación"];
+
+  return (
+    <div className="content-editor">
+      <p className="checkout-sub">
+        Acá editás los textos, fotos y videos que se ven en la tienda (no los productos, eso está en la otra
+        pestaña). Dejá un campo de foto o video vacío para usar el que viene por defecto. Al final tocá
+        "Guardar todos los cambios" para que se vean en el sitio.
+      </p>
+
+      {msg === "ok" && <div className="content-ok">Cambios guardados ✓</div>}
+      {msg && msg !== "ok" && <div className="tag-error" style={{ marginBottom: 16 }}>{msg}</div>}
+
+      <div className="content-section">
+        <h3>Portada (hero)</h3>
+        <MediaField label="Video de portada" value={form.heroVideo} video onChange={(v) => update("heroVideo", v)} />
+        <div className="content-field"><label>Texto pequeño de arriba</label><input className="admin-input" value={form.heroEyebrow} onChange={(e) => update("heroEyebrow", e.target.value)} /></div>
+        <div className="content-field"><label>Título grande</label><input className="admin-input" value={form.heroTitle} onChange={(e) => update("heroTitle", e.target.value)} /></div>
+        <div className="content-field"><label>Subtítulo</label><input className="admin-input" value={form.heroSubtitle} onChange={(e) => update("heroSubtitle", e.target.value)} /></div>
+        <div className="content-field"><label>Texto del botón</label><input className="admin-input" value={form.heroCta} onChange={(e) => update("heroCta", e.target.value)} /></div>
+      </div>
+
+      <div className="content-section">
+        <h3>Frase "Hecho para durar"</h3>
+        <div className="content-field"><label>Título</label><input className="admin-input" value={form.stripTitle} onChange={(e) => update("stripTitle", e.target.value)} /></div>
+        <div className="content-field"><label>Texto</label><input className="admin-input" value={form.stripText} onChange={(e) => update("stripText", e.target.value)} /></div>
+      </div>
+
+      <div className="content-section">
+        <h3>Nueva colección</h3>
+        <MediaField
+          label="Foto principal"
+          value={form.discoverImage}
+          onChange={(v) => update("discoverImage", v)}
+          hint="Foto editorial (por ejemplo una modelo con una prenda de la colección). Si no subís nada, se usa un fondo de textura."
+        />
+        <div className="content-field"><label>Etiqueta chica (ej. "Colección 26")</label><input className="admin-input" value={form.discoverEyebrow} onChange={(e) => update("discoverEyebrow", e.target.value)} /></div>
+        <div className="content-field"><label>Título</label><input className="admin-input" value={form.discoverTitle} onChange={(e) => update("discoverTitle", e.target.value)} /></div>
+        <div className="content-field"><label>Descripción</label><textarea className="admin-input" rows={2} value={form.discoverText} onChange={(e) => update("discoverText", e.target.value)} /></div>
+        <div className="content-field"><label>Texto del botón</label><input className="admin-input" value={form.discoverCta} onChange={(e) => update("discoverCta", e.target.value)} /></div>
+      </div>
+
+      <div className="content-section">
+        <h3>Categorías</h3>
+        <div className="content-field"><label>Texto pequeño (ej. "Explorá")</label><input className="admin-input" value={form.categoriesEyebrow} onChange={(e) => update("categoriesEyebrow", e.target.value)} /></div>
+        <div className="content-field"><label>Título</label><input className="admin-input" value={form.categoriesTitle} onChange={(e) => update("categoriesTitle", e.target.value)} /></div>
+        <p className="content-hint">Una foto por categoría (se usan las categorías que ya tenés cargadas en productos).</p>
+        <div className="content-cat-grid">
+          {categories.map((c) => (
+            <MediaField key={c} label={c} value={form.categoryImages[c] || ""} onChange={(v) => updateCategoryImage(c, v)} />
+          ))}
+        </div>
+      </div>
+
+      <div className="content-section">
+        <h3>Video de texturas</h3>
+        <MediaField label="Video" value={form.textureVideo} video onChange={(v) => update("textureVideo", v)} />
+        <div className="content-field"><label>Texto pequeño</label><input className="admin-input" value={form.textureEyebrow} onChange={(e) => update("textureEyebrow", e.target.value)} /></div>
+        <div className="content-field"><label>Título</label><input className="admin-input" value={form.textureTitle} onChange={(e) => update("textureTitle", e.target.value)} /></div>
+      </div>
+
+      <div className="content-section">
+        <h3>Banner institucional</h3>
+        <div className="content-field"><label>Texto pequeño</label><input className="admin-input" value={form.institutionalEyebrow} onChange={(e) => update("institutionalEyebrow", e.target.value)} /></div>
+        <div className="content-field"><label>Título</label><input className="admin-input" value={form.institutionalTitle} onChange={(e) => update("institutionalTitle", e.target.value)} /></div>
+        <div className="content-field"><label>Texto</label><textarea className="admin-input" rows={2} value={form.institutionalText} onChange={(e) => update("institutionalText", e.target.value)} /></div>
+      </div>
+
+      <div className="content-section">
+        <h3>Sección "Para todos los días"</h3>
+        <div className="content-field"><label>Título</label><input className="admin-input" value={form.marqueeTitle} onChange={(e) => update("marqueeTitle", e.target.value)} /></div>
+        <div className="content-field"><label>Texto</label><input className="admin-input" value={form.marqueeText} onChange={(e) => update("marqueeText", e.target.value)} /></div>
+      </div>
+
+      <div className="content-section">
+        <h3>Beneficios</h3>
+        {form.benefits.map((b, i) => (
+          <div className="content-benefit-row" key={i}>
+            <span className="content-benefit-icon">{BENEFIT_LABELS[i]}</span>
+            <input className="admin-input" value={b.title} onChange={(e) => updateBenefit(i, "title", e.target.value)} placeholder="Título" />
+            <input className="admin-input" value={b.text} onChange={(e) => updateBenefit(i, "text", e.target.value)} placeholder="Texto" />
+          </div>
+        ))}
+      </div>
+
+      <div className="content-section">
+        <h3>Pie de página</h3>
+        <div className="content-field"><label>Frase debajo del logo</label><input className="admin-input" value={form.footerTagline} onChange={(e) => update("footerTagline", e.target.value)} /></div>
+      </div>
+
+      <button className="admin-save wide" disabled={saving} onClick={handleSave}>
+        {saving ? "Guardando…" : "Guardar todos los cambios"}
+      </button>
+    </div>
+  );
+}
+
+function AdminPage({ products, setProducts, onExit, content, categories, onSaveContent }) {
+  const [tab, setTab] = useState("products");
   const [unlocked, setUnlocked] = useState(false);
   const [pass, setPass] = useState("");
   const [passErr, setPassErr] = useState(false);
@@ -564,47 +773,60 @@ function AdminPage({ products, setProducts, onExit }) {
         <button className="back-link" onClick={onExit}><ArrowLeft size={14} /> Volver a la tienda</button>
       </div>
 
-      {busyMsg && <div className="tag-error" style={{ marginBottom: 20 }}>{busyMsg}</div>}
-
-      {products.length === 0 && (
-        <div className="bank-box" style={{ marginBottom: 40 }}>
-          <h3>Catálogo vacío</h3>
-          <p style={{ fontSize: 13, marginBottom: 14, opacity: 0.8 }}>Todavía no hay productos cargados en Supabase. Podés empezar de cero con "Agregar producto nuevo" más abajo, o precargar el catálogo de ejemplo con precios y prendas ya cargadas.</p>
-          <button className="admin-save" disabled={seeding} onClick={handleSeed}>{seeding ? "Cargando…" : "Precargar catálogo de ejemplo"}</button>
-        </div>
-      )}
-
-      <div className="admin-list">
-        {products.map((p) => <ProductRow key={p.id} product={p} onSave={saveProduct} onDelete={deleteProduct} />)}
+      <div className="admin-tabs">
+        <button className={`admin-tab ${tab === "products" ? "active" : ""}`} onClick={() => setTab("products")}>Productos</button>
+        <button className={`admin-tab ${tab === "content" ? "active" : ""}`} onClick={() => setTab("content")}>Contenido del sitio</button>
       </div>
 
-      <div className="admin-new">
-        <h3>Agregar producto nuevo</h3>
-        <form onSubmit={addProduct} className="admin-fields admin-fields-new">
-          <input className="admin-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre" required />
-          <input className="admin-input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} placeholder="Tipo de prenda" />
-          <input className="admin-input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Categoría" />
-          <input className="admin-input" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Precio" required />
-          <input className="admin-input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="Stock" />
-          <input className="admin-input" value={form.colors} onChange={(e) => setForm({ ...form, colors: e.target.value })} placeholder="Colores (Negro, Beige...)" />
-          <input className="admin-input" value={form.sizes} onChange={(e) => setForm({ ...form, sizes: e.target.value })} placeholder="Talles (S, M, L...)" />
+      {tab === "products" && (
+        <>
+          {busyMsg && <div className="tag-error" style={{ marginBottom: 20 }}>{busyMsg}</div>}
 
-          <div className="admin-row-imgs" style={{ gridColumn: "1 / -1" }}>
-            {newImages.map((src, i) => (
-              <div className="admin-thumb" key={i}>
-                <img src={src} alt="" />
-                <button type="button" onClick={() => setNewImages((prev) => prev.filter((_, ix) => ix !== i))}><X size={12} /></button>
-              </div>
-            ))}
-            <button type="button" className="admin-thumb add" onClick={() => newFileRef.current?.click()} disabled={uploadingNew}>
-              {uploadingNew ? <span className="mini-spinner" /> : <ImagePlus size={16} />}
-            </button>
-            <input type="file" accept="image/*" multiple ref={newFileRef} style={{ display: "none" }} onChange={addNewImages} />
+          {products.length === 0 && (
+            <div className="bank-box" style={{ marginBottom: 40 }}>
+              <h3>Catálogo vacío</h3>
+              <p style={{ fontSize: 13, marginBottom: 14, opacity: 0.8 }}>Todavía no hay productos cargados en Supabase. Podés empezar de cero con "Agregar producto nuevo" más abajo, o precargar el catálogo de ejemplo con precios y prendas ya cargadas.</p>
+              <button className="admin-save" disabled={seeding} onClick={handleSeed}>{seeding ? "Cargando…" : "Precargar catálogo de ejemplo"}</button>
+            </div>
+          )}
+
+          <div className="admin-list">
+            {products.map((p) => <ProductRow key={p.id} product={p} onSave={saveProduct} onDelete={deleteProduct} />)}
           </div>
 
-          <button type="submit" className="admin-save wide" disabled={uploadingNew} style={{ gridColumn: "1 / -1" }}><Plus size={14} /> Agregar producto</button>
-        </form>
-      </div>
+          <div className="admin-new">
+            <h3>Agregar producto nuevo</h3>
+            <form onSubmit={addProduct} className="admin-fields admin-fields-new">
+              <input className="admin-input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Nombre" required />
+              <input className="admin-input" value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })} placeholder="Tipo de prenda" />
+              <input className="admin-input" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="Categoría" />
+              <input className="admin-input" type="number" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} placeholder="Precio" required />
+              <input className="admin-input" type="number" value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} placeholder="Stock" />
+              <input className="admin-input" value={form.colors} onChange={(e) => setForm({ ...form, colors: e.target.value })} placeholder="Colores (Negro, Beige...)" />
+              <input className="admin-input" value={form.sizes} onChange={(e) => setForm({ ...form, sizes: e.target.value })} placeholder="Talles (S, M, L...)" />
+
+              <div className="admin-row-imgs" style={{ gridColumn: "1 / -1" }}>
+                {newImages.map((src, i) => (
+                  <div className="admin-thumb" key={i}>
+                    <img src={src} alt="" />
+                    <button type="button" onClick={() => setNewImages((prev) => prev.filter((_, ix) => ix !== i))}><X size={12} /></button>
+                  </div>
+                ))}
+                <button type="button" className="admin-thumb add" onClick={() => newFileRef.current?.click()} disabled={uploadingNew}>
+                  {uploadingNew ? <span className="mini-spinner" /> : <ImagePlus size={16} />}
+                </button>
+                <input type="file" accept="image/*" multiple ref={newFileRef} style={{ display: "none" }} onChange={addNewImages} />
+              </div>
+
+              <button type="submit" className="admin-save wide" disabled={uploadingNew} style={{ gridColumn: "1 / -1" }}><Plus size={14} /> Agregar producto</button>
+            </form>
+          </div>
+        </>
+      )}
+
+      {tab === "content" && (
+        <SiteContentEditor content={content} categories={categories} onSave={onSaveContent} />
+      )}
     </div>
   );
 }
@@ -626,6 +848,24 @@ export default function App() {
     return () => { alive = false; };
   }, []);
 
+  const [siteContentRaw, setSiteContentRaw] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetchSiteContent().then((data) => { if (alive) setSiteContentRaw(data); });
+    return () => { alive = false; };
+  }, []);
+  const content = useMemo(() => ({
+    ...DEFAULT_CONTENT,
+    ...siteContentRaw,
+    categoryImages: { ...DEFAULT_CONTENT.categoryImages, ...(siteContentRaw?.categoryImages || {}) },
+    benefits: (siteContentRaw?.benefits?.length ? siteContentRaw.benefits : DEFAULT_CONTENT.benefits),
+  }), [siteContentRaw]);
+
+  const handleSaveContent = async (newContent) => {
+    await saveSiteContent(newContent);
+    setSiteContentRaw(newContent);
+  };
+
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [bump, setBump] = useState(false);
@@ -633,6 +873,7 @@ export default function App() {
   const [activeProduct, setActiveProduct] = useState(null);
   const [buyer, setBuyer] = useState({ nombre: "", telefono: "", entrega: "envio", direccion: "", notas: "" });
   const [comprobante, setComprobante] = useState(null);
+  const [newsletterSent, setNewsletterSent] = useState(false);
   const fileRef = useRef(null);
 
   const [scrolled, setScrolled] = useState(false);
@@ -649,6 +890,11 @@ export default function App() {
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
+
+  useEffect(() => {
+    document.body.style.overflow = mobileOpen || cartOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [mobileOpen, cartOpen]);
 
   const CATEGORIES = useMemo(() => [...new Set(products.map((p) => p.category))], [products]);
 
@@ -832,9 +1078,23 @@ export default function App() {
         .search-result-meta{ font-size:11px; color:var(--taupe); }
         .search-empty{ font-size:12px; color:var(--taupe); margin-top:18px; }
 
-        .mobile-nav{ position:fixed; inset:0; background:var(--cream); z-index:55; padding:100px 32px 40px; transform:translateX(100%); transition:transform .4s var(--ease); display:flex; flex-direction:column; gap:4px; }
+        .mobile-nav-overlay{ position:fixed; inset:0; background:rgba(20,15,10,0.35); z-index:54; opacity:0; pointer-events:none; transition:opacity .35s var(--ease); }
+        .mobile-nav-overlay.open{ opacity:1; pointer-events:auto; }
+        .mobile-nav{ position:fixed; top:0; right:0; height:100%; width:min(380px,86vw); background:var(--cream); z-index:55; transform:translateX(100%); transition:transform .4s var(--ease); display:flex; flex-direction:column; box-shadow:-16px 0 40px rgba(91,64,39,0.22); }
         .mobile-nav.open{ transform:translateX(0); }
-        .mobile-nav button{ background:none; border:none; text-align:left; font-family:var(--serif); font-size:26px; text-transform:uppercase; letter-spacing:0.05em; padding:14px 0; border-bottom:1px solid var(--line); color:var(--ink); }
+        .mobile-nav-head{ display:flex; align-items:center; justify-content:space-between; padding:22px 24px; border-bottom:1px solid var(--line); flex-shrink:0; }
+        .mobile-nav-list{ flex:1; overflow-y:auto; padding:8px 24px; display:flex; flex-direction:column; }
+        .mobile-nav-list button{ display:flex; align-items:center; gap:14px; background:none; border:none; text-align:left; font-family:var(--serif); font-size:21px; text-transform:uppercase; letter-spacing:0.03em; padding:15px 0; border-bottom:1px solid var(--line); color:var(--ink); opacity:0; transform:translateX(14px); transition:opacity .35s var(--ease), transform .35s var(--ease), color .2s var(--ease); }
+        .mobile-nav-list button:hover{ color:var(--umber); }
+        .mobile-nav.open .mobile-nav-list button{ opacity:1; transform:translateX(0); }
+        .mobile-nav.open .mobile-nav-list button:nth-child(1){ transition-delay:.08s; }
+        .mobile-nav.open .mobile-nav-list button:nth-child(2){ transition-delay:.12s; }
+        .mobile-nav.open .mobile-nav-list button:nth-child(3){ transition-delay:.16s; }
+        .mobile-nav.open .mobile-nav-list button:nth-child(4){ transition-delay:.2s; }
+        .mobile-nav.open .mobile-nav-list button:nth-child(5){ transition-delay:.24s; }
+        .mobile-nav.open .mobile-nav-list button:nth-child(n+6){ transition-delay:.28s; }
+        .mobile-nav-idx{ font-family:'Inter',sans-serif; font-size:11px; letter-spacing:0.04em; color:var(--taupe); min-width:20px; }
+        .mobile-nav-foot{ padding:20px 24px; border-top:1px solid var(--line); flex-shrink:0; }
 
         /* ---------- Grano de película ---------- */
         .grain{
@@ -878,25 +1138,61 @@ export default function App() {
         .texture-bg{ animation:heroZoom 20s ease-in-out infinite alternate; }
         .texture-overlay{ position:relative; z-index:2; text-align:center; color:var(--cream); padding:0 24px; }
 
-        /* ---------- Banners de categoría ---------- */
-        .cat-banners{ display:grid; grid-template-columns:repeat(3,1fr); gap:22px; max-width:1200px; margin:70px auto 0; padding:0 28px; }
-        .cat-banner{ position:relative; display:flex; align-items:flex-end; width:100%; min-height:70vh; border:none; padding:0; border-radius:18px; overflow:hidden; box-shadow:inset 0 1px 0 rgba(255,255,255,0.12), 0 20px 40px -20px rgba(69,46,26,0.4); cursor:pointer; transition:transform .35s var(--ease), box-shadow .35s var(--ease); }
-        .cat-banner:hover{ transform:translateY(-3px); box-shadow:inset 0 1px 0 rgba(255,255,255,0.12), 0 26px 50px -20px rgba(69,46,26,0.5); }
-        .cat-banner-media{ position:absolute; inset:0; transition:transform 1.2s var(--ease); }
-        .cat-banner:hover .cat-banner-media, .cat-zoom{ animation:heroZoom 9s ease-in-out infinite alternate; }
-        .cat-banner::after{ content:""; position:absolute; inset:0; background:linear-gradient(180deg, transparent 35%, rgba(35,26,17,0.6) 100%); z-index:1; }
-        .cat-banner-label{ position:relative; z-index:2; font-family:var(--serif); font-size:clamp(22px,3vw,30px); text-transform:uppercase; letter-spacing:0.08em; color:var(--cream); padding:0 24px 8px; }
-        .cat-banner-btn{ position:absolute; bottom:26px; right:24px; z-index:2; font-size:10px; letter-spacing:0.14em; text-transform:uppercase; color:var(--cream); border-bottom:1px solid var(--cream); padding-bottom:2px; }
+        /* ---------- Fotografía editorial (placeholder cálido, sin foto real) ---------- */
+        .editorial-photo{ position:relative; overflow:hidden;
+          background:
+            radial-gradient(120% 95% at 22% 12%, rgba(255,252,246,0.95), transparent 58%),
+            linear-gradient(150deg, color-mix(in srgb, var(--tint, #cbab7d) 30%, #EFE3D3) 0%, #E4D3BC 48%, #D5C0A0 100%);
+        }
+        .editorial-photo::before{
+          content:""; position:absolute; inset:0; pointer-events:none; opacity:0.14; mix-blend-mode:multiply;
+          background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+        }
 
-        /* ---------- Bloques editoriales ---------- */
-        .editorial{ display:grid; grid-template-columns:1fr 1fr; max-width:1200px; margin:70px auto 0; padding:0 28px; gap:0; align-items:stretch; }
-        .editorial.reverse{ direction:rtl; }
-        .editorial.reverse > *{ direction:ltr; }
-        .editorial-media{ min-height:420px; border-radius:18px; overflow:hidden; }
-        .editorial-text{ display:flex; flex-direction:column; justify-content:center; padding:50px; }
-        .editorial-text h2{ font-family:var(--serif); font-size:clamp(24px,3.4vw,34px); text-transform:uppercase; letter-spacing:0.04em; color:var(--ink); margin:0 0 16px; line-height:1.2; }
-        .editorial-text p{ font-size:14px; opacity:0.7; line-height:1.7; }
+        /* ---------- Hero "Nueva colección" (dos columnas) ---------- */
+        .discover-hero{ display:grid; grid-template-columns:1.15fr 1fr; max-width:1200px; margin:0 auto; padding:0 28px; gap:0; align-items:stretch; }
+        .discover-hero-photo{ position:relative; min-height:520px; border-radius:28px 0 0 28px; overflow:hidden; }
+        .discover-hero-photo-img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+        .discover-hero-ghost{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-family:var(--serif); font-size:clamp(70px,11vw,160px); letter-spacing:0.02em; color:#fff; opacity:0.24; text-transform:uppercase; white-space:nowrap; pointer-events:none; }
+        .discover-hero-panel{ position:relative; border-radius:0 28px 28px 0; padding:64px 56px; display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
+          background:linear-gradient(155deg, #FBF7F0 0%, var(--cream) 55%, #F2E7D8 100%); }
+        .discover-eyebrow{ display:block; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:var(--taupe); margin-bottom:18px; }
+        .discover-title{ font-family:var(--serif); font-size:clamp(34px,4.4vw,52px); text-transform:uppercase; letter-spacing:0.03em; color:var(--ink); margin:0 0 22px; line-height:1.05; }
+        .discover-rule{ display:block; width:56px; height:1px; background:var(--line); margin-bottom:22px; }
+        .discover-desc{ font-size:14.5px; line-height:1.7; color:var(--ink); opacity:0.75; max-width:340px; margin-bottom:32px; }
+        .discover-cta{ background:var(--ink); color:var(--cream); border:none; padding:16px 32px; font-size:11px; letter-spacing:0.16em; text-transform:uppercase; border-radius:6px; transition:background .3s var(--ease), transform .25s var(--ease), box-shadow .25s var(--ease); box-shadow:0 10px 24px -14px rgba(69,46,26,0.5); }
+        .discover-cta:hover{ background:var(--walnut); transform:translateY(-2px); box-shadow:0 14px 28px -14px rgba(69,46,26,0.55); }
 
+        /* ---------- Sección de categorías ---------- */
+        .categories-head{ max-width:1200px; margin:90px auto 30px; padding:0 28px; display:flex; align-items:center; gap:34px; }
+        .categories-heading{ flex-shrink:0; }
+        .categories-eyebrow{ display:block; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:var(--taupe); margin-bottom:10px; }
+        .categories-heading h2{ font-family:var(--serif); font-size:clamp(24px,3.4vw,34px); text-transform:uppercase; letter-spacing:0.04em; color:var(--ink); margin:0; }
+        .categories-rule{ flex:1; height:1px; background:var(--line); }
+        .categories-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:14px; max-width:1200px; margin:0 auto; padding:0 28px; }
+        .category-card{ position:relative; display:block; width:100%; height:380px; border:none; padding:0; border-radius:18px; overflow:hidden; cursor:pointer; box-shadow:0 14px 28px -20px rgba(69,46,26,0.35); }
+        .category-card-img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transition:transform .45s var(--ease); }
+        .category-card:hover .category-card-img{ transform:scale(1.04); }
+        .category-card::after{ content:""; position:absolute; inset:0; background:rgba(20,15,10,0.16); transition:background .35s var(--ease); }
+        .category-card:hover::after{ background:rgba(20,15,10,0.28); }
+        .category-card-name{ position:absolute; z-index:2; left:16px; bottom:18px; font-family:var(--serif); font-size:15px; text-transform:uppercase; letter-spacing:0.05em; color:#fff; display:flex; flex-direction:column; align-items:flex-start; gap:6px; }
+        .category-card-line{ width:22px; height:1px; background:rgba(255,255,255,0.7); }
+        .category-card-arrow{ position:absolute; z-index:2; right:16px; bottom:18px; color:#fff; font-size:16px; transition:transform .3s var(--ease); }
+        .category-card:hover .category-card-arrow{ transform:translateX(4px); }
+
+        /* ---------- Marquee de marca ---------- */
+        .marquee-section{ margin-top:70px; }
+        .marquee-caption{ max-width:1200px; margin:0 auto 26px; padding:0 28px; text-align:center; }
+        .marquee-caption h2{ font-family:var(--serif); font-size:clamp(22px,3.4vw,32px); text-transform:uppercase; letter-spacing:0.05em; color:var(--ink); margin:0 0 8px; }
+        .marquee-caption p{ font-size:14px; opacity:0.65; }
+        .marquee{ overflow:hidden; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:20px 0; }
+        .marquee-track{ display:flex; width:max-content; gap:52px; animation:marqueeScroll 24s linear infinite; }
+        .marquee:hover .marquee-track{ animation-play-state:paused; }
+        .marquee-word{ font-family:var(--serif); font-size:clamp(36px,7vw,96px); text-transform:uppercase; letter-spacing:0.02em; line-height:1; white-space:nowrap; }
+        .marquee-word.w-bold{ font-weight:700; color:var(--ink); opacity:1; }
+        .marquee-word.w-light{ font-weight:400; color:transparent; opacity:0.4; -webkit-text-stroke:1px var(--ink); }
+        @keyframes marqueeScroll{ from{ transform:translateX(0); } to{ transform:translateX(-50%); } }
+        @media (prefers-reduced-motion: reduce){ .marquee-track{ animation:none; } }
         /* ---------- Banner institucional ---------- */
         .institutional{ position:relative; margin-top:70px; padding:90px 28px; display:flex; align-items:center; justify-content:center; }
         .institutional-inner{ position:relative; z-index:2; max-width:620px; text-align:center; color:var(--cream); }
@@ -1038,10 +1334,24 @@ export default function App() {
         .new-order-btn{ background:var(--cream); border:1px solid var(--ink); padding:13px 26px; border-radius:999px; font-size:11px; font-weight:600; color:var(--ink); letter-spacing:0.14em; text-transform:uppercase; box-shadow:0 8px 18px -10px rgba(69,46,26,0.35); transition:transform .2s var(--ease); }
         .new-order-btn:hover{ transform:translateY(-2px); }
 
-        /* ---------- Footer minimalista ---------- */
-        .footer-full{ border-top:1px solid var(--line); padding:120px 28px 36px; }
-        .footer-minimal{ max-width:640px; margin:0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; text-align:center; }
-        .footer-copy{ font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--taupe); }
+        /* ---------- Footer ---------- */
+        .footer-full{ border-top:1px solid var(--line); padding:80px 28px 30px; }
+        .footer-grid{ max-width:1200px; margin:0 auto; display:grid; grid-template-columns:1.3fr 1fr 1fr 0.8fr 1.3fr; gap:32px; margin-bottom:46px; }
+        .footer-col{ display:flex; flex-direction:column; align-items:flex-start; gap:11px; }
+        .footer-col h4{ font-family:var(--serif); font-size:12px; text-transform:uppercase; letter-spacing:0.16em; margin:0 0 4px; color:var(--ink); }
+        .footer-col-brand{ gap:10px; }
+        .footer-tagline{ font-size:12px; color:var(--ink); opacity:0.65; line-height:1.5; max-width:220px; }
+        .footer-link{ background:none; border:none; font-size:12.5px; color:var(--ink); opacity:0.7; padding:0; text-align:left; text-decoration:none; transition:opacity .2s var(--ease); }
+        .footer-link:hover{ opacity:1; text-decoration:underline; }
+        .footer-news-text{ font-size:12px; color:var(--ink); opacity:0.65; margin-bottom:2px; }
+        .newsletter-row{ display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; width:100%; box-shadow:0 6px 14px -10px rgba(69,46,26,0.3); }
+        .newsletter-row input{ flex:1; min-width:0; border:none; background:var(--cream); padding:10px 14px; font-size:12px; color:var(--ink); }
+        .newsletter-row input:focus{ outline:none; }
+        .newsletter-row button{ background:var(--ink); color:var(--cream); border:none; padding:0 18px; font-size:11px; letter-spacing:0.06em; transition:background .2s var(--ease); }
+        .newsletter-row button:hover:not(:disabled){ background:var(--walnut); }
+        .newsletter-row button:disabled{ opacity:0.6; }
+        .footer-bottom{ max-width:1200px; margin:0 auto; border-top:1px solid var(--line); padding-top:24px; display:flex; flex-wrap:wrap-reverse; gap:16px; align-items:center; justify-content:space-between; }
+        .footer-copy{ font-size:11px; letter-spacing:0.06em; color:var(--taupe); }
         .footer-ig-link{ display:inline-flex; align-items:center; gap:6px; background:var(--oat); color:var(--ink); padding:8px 16px; border-radius:999px; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; box-shadow:0 6px 14px -8px rgba(69,46,26,0.4); transition:transform .2s var(--ease), background .2s var(--ease), box-shadow .2s var(--ease); }
         .footer-ig-link:hover{ background:var(--sand); transform:translateY(-2px); box-shadow:0 10px 20px -8px rgba(69,46,26,0.45); }
 
@@ -1078,6 +1388,28 @@ export default function App() {
         .mini-spinner{ width:14px; height:14px; border:2px solid rgba(91,64,39,0.25); border-top-color:var(--ink); border-radius:50%; display:inline-block; animation:spin .7s linear infinite; }
         @keyframes spin{ to{ transform:rotate(360deg); } }
 
+        /* ---------- Admin: pestañas y editor de contenido ---------- */
+        .admin-tabs{ display:flex; gap:10px; margin-bottom:30px; border-bottom:1px solid var(--line); }
+        .admin-tab{ background:none; border:none; padding:10px 4px 14px; font-size:12px; letter-spacing:0.08em; text-transform:uppercase; color:var(--taupe); position:relative; transition:color .2s var(--ease); }
+        .admin-tab::after{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--ink); transform:scaleX(0); transition:transform .25s var(--ease); }
+        .admin-tab.active{ color:var(--ink); }
+        .admin-tab.active::after{ transform:scaleX(1); }
+        .content-editor{ max-width:760px; }
+        .content-section{ border-top:1px solid var(--line); padding:26px 0; display:flex; flex-direction:column; gap:16px; }
+        .content-section:first-of-type{ border-top:none; padding-top:6px; }
+        .content-section h3{ font-family:var(--serif); font-size:16px; text-transform:uppercase; letter-spacing:0.06em; margin:0; color:var(--ink); }
+        .content-field{ display:flex; flex-direction:column; gap:6px; }
+        .content-field label{ font-size:12px; font-weight:600; color:var(--ink); }
+        .content-hint{ font-size:12px; color:var(--taupe); margin:0; }
+        .content-ok{ background:var(--oat); color:var(--ink); border-radius:12px; padding:12px 16px; font-size:13px; margin-bottom:18px; }
+        .content-media-preview{ width:100%; max-width:280px; height:140px; border-radius:12px; overflow:hidden; background:var(--oat); display:flex; align-items:center; justify-content:center; }
+        .content-media-preview img, .content-media-preview video{ width:100%; height:100%; object-fit:cover; }
+        .content-media-empty{ font-size:11px; color:var(--taupe); text-align:center; padding:0 16px; }
+        .content-media-actions{ display:flex; gap:8px; }
+        .content-cat-grid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:20px; }
+        .content-benefit-row{ display:grid; grid-template-columns:170px 1fr 1.4fr; gap:10px; align-items:center; }
+        .content-benefit-icon{ font-size:12px; color:var(--taupe); }
+
         @media (max-width:860px){
           .nav{ display:none; }
           .hamburger{ display:flex; }
@@ -1085,22 +1417,41 @@ export default function App() {
           .detail-wrap, .checkout-wrap, .confirmed-wrap{ padding-top:110px; }
           .admin-row{ grid-template-columns:1fr; }
           .admin-fields, .admin-fields-new{ grid-template-columns:1fr 1fr; }
-          .cat-banners{ grid-template-columns:1fr 1fr; margin-top:50px; }
-          .editorial{ margin-top:50px; }
-          .editorial, .editorial.reverse{ grid-template-columns:1fr; direction:ltr; }
-          .editorial-media{ min-height:260px; border-radius:16px; }
-          .editorial-text{ padding:28px 4px; }
+          .content-benefit-row{ grid-template-columns:1fr; gap:6px; }
+          .admin-tabs{ overflow-x:auto; }
+          .discover-hero{ grid-template-columns:1fr; }
+          .discover-hero-photo{ min-height:340px; border-radius:28px 28px 0 0; }
+          .discover-hero-panel{ border-radius:0 0 28px 28px; padding:44px 32px; align-items:flex-start; }
+          .categories-head{ margin:60px auto 24px; }
+          .categories-grid{ grid-template-columns:repeat(3,1fr); }
+          .category-card{ height:260px; }
           .institutional{ margin-top:50px; padding:64px 24px; }
           .texture-section{ height:60vh; margin-top:50px; }
-          .cat-banner{ min-height:46vh; }
+          .marquee-section{ margin-top:50px; }
+          .footer-grid{ grid-template-columns:1fr 1fr; gap:30px; }
+          .footer-col-brand{ grid-column:1 / -1; }
         }
         @media (max-width:640px){
           .hero{ min-height:560px; }
           .letters{ font-size:clamp(28px,9vw,74px); margin-bottom:14px; }
           .strip{ padding:50px 16px 6px; }
+          .discover-hero{ padding:0 16px; }
+          .discover-hero-photo{ min-height:260px; }
+          .discover-hero-panel{ padding:32px 22px; }
+          .discover-title{ font-size:clamp(28px,7vw,40px); }
+          .discover-desc{ max-width:none; }
+          .categories-head{ flex-direction:column; align-items:flex-start; gap:12px; margin:44px auto 20px; padding:0 16px; }
+          .categories-rule{ display:none; }
+          .categories-grid{ grid-template-columns:repeat(2,1fr); gap:12px; padding:0 16px; }
+          .category-card{ height:220px; }
+          .marquee-word{ font-size:clamp(30px,11vw,96px); }
+          .marquee-track{ gap:34px; }
           .benefits{ grid-template-columns:1fr; padding:44px 24px; gap:26px; }
           .related{ margin-top:50px; }
-          .footer-full{ padding:90px 20px 30px; }
+          .footer-full{ padding:56px 20px 26px; }
+          .footer-grid{ grid-template-columns:1fr 1fr; gap:28px; margin-bottom:32px; }
+          .footer-col-brand{ grid-column:1 / -1; }
+          .footer-bottom{ flex-direction:column; text-align:center; justify-content:center; }
           .catalog{ grid-template-columns:1fr 1fr; gap:16px 12px; padding:0 16px 60px; }
           .related-grid{ padding:0; }
           .pcard-media{ height:0; padding-bottom:130%; border-radius:12px; }
@@ -1121,8 +1472,9 @@ export default function App() {
           .pcard-hover-name, .quick-add{ opacity:1; transform:translateY(0); }
         }
         @media (max-width:520px){
-          .cat-banners{ grid-template-columns:1fr; }
           .drawer{ border-radius:0; }
+          .footer-grid{ grid-template-columns:1fr; }
+          .footer-col, .footer-col-brand{ align-items:flex-start; }
         }
       `}</style>
 
@@ -1180,10 +1532,25 @@ export default function App() {
             </div>
           </div>
 
+          <div className={`mobile-nav-overlay ${mobileOpen ? "open" : ""}`} onClick={() => setMobileOpen(false)} />
           <div className={`mobile-nav ${mobileOpen ? "open" : ""}`}>
-            <button className="icon-plain" style={{ color: "var(--ink)", alignSelf: "flex-end", marginBottom: 20 }} onClick={() => setMobileOpen(false)}><X size={24} /></button>
-            <button onClick={() => scrollToCatalog(null)}>Ver todo</button>
-            {CATEGORIES.map((c) => <button key={c} onClick={() => scrollToCatalog(c)}>{c}</button>)}
+            <div className="mobile-nav-head">
+              <span className="logo" style={{ color: "var(--ink)", fontSize: 20 }}>{CONFIG.storeName}</span>
+              <button className="icon-btn" onClick={() => setMobileOpen(false)}><X size={18} /></button>
+            </div>
+            <nav className="mobile-nav-list">
+              <button onClick={() => scrollToCatalog(null)}><span className="mobile-nav-idx">00</span> Ver todo</button>
+              {CATEGORIES.map((c, i) => (
+                <button key={c} onClick={() => scrollToCatalog(c)}>
+                  <span className="mobile-nav-idx">{String(i + 1).padStart(2, "0")}</span> {c}
+                </button>
+              ))}
+            </nav>
+            <div className="mobile-nav-foot">
+              <a href={CONFIG.instagram} target="_blank" rel="noreferrer" className="footer-ig-link">
+                <Instagram size={14} /> @adolf.ind
+              </a>
+            </div>
           </div>
         </>
       )}
@@ -1192,7 +1559,7 @@ export default function App() {
         <>
           <section className="hero">
             <div className="hero-bg-clip" style={{ transform: `translateY(${scrollY * 0.28}px)` }}>
-              <CinematicVideo src={CONFIG.heroVideo} poster="/videos/hero-poster.jpg" priority className="hero-bg" />
+              <CinematicVideo src={content.heroVideo} poster="/videos/hero-poster.jpg" priority className="hero-bg" />
             </div>
             <div className="grain" />
             <div className="hero-veil" />
@@ -1202,9 +1569,9 @@ export default function App() {
               animate="show"
               variants={{ hidden: {}, show: { transition: { staggerChildren: 0.08, delayChildren: 0.1 } } }}
             >
-              <motion.div className="hero-eyebrow" variants={fadeUp}>Colección de temporada</motion.div>
-              <LetterReveal text={CONFIG.tagline} className="hero-title" tag="h1" baseDelay={0.2} />
-              <motion.p variants={fadeUp}>Modelos elegidos para acompañarte todos los días. Encontrá tu próximo look.</motion.p>
+              <motion.div className="hero-eyebrow" variants={fadeUp}>{content.heroEyebrow}</motion.div>
+              <LetterReveal text={content.heroTitle} className="hero-title" tag="h1" baseDelay={0.2} />
+              <motion.p variants={fadeUp}>{content.heroSubtitle}</motion.p>
               <motion.button
                 className="hero-cta"
                 variants={fadeUp}
@@ -1212,79 +1579,107 @@ export default function App() {
                 whileTap={{ scale: 0.97 }}
                 onClick={() => document.getElementById("catalogo")?.scrollIntoView({ behavior: "smooth" })}
               >
-                <span>Ver colección</span>
+                <span>{content.heroCta}</span>
               </motion.button>
             </motion.div>
             <div className="hero-scroll" />
           </section>
 
           <div className="strip" id="marca">
-            <Reveal><h2>Hecho para durar</h2></Reveal>
-            <Reveal delay={80}><p>Cada prenda de {CONFIG.storeName} fue elegida pensando en vos: materiales lindos, colores tierra y básicos que no pasan de moda.</p></Reveal>
+            <Reveal><h2>{content.stripTitle}</h2></Reveal>
+            <Reveal delay={80}><p>{content.stripText}</p></Reveal>
           </div>
 
-          <section className="texture-section">
-            <div className="hero-bg-clip" style={{ transform: `translateY(${(scrollY - 900) * 0.15}px)` }}>
-              <CinematicVideo src={CONFIG.textureVideo} poster="/videos/texture-poster.jpg" className="texture-bg" />
+          <div className="discover-hero">
+            <Reveal className="discover-hero-photo" as="div">
+              {content.discoverImage ? (
+                <img src={content.discoverImage} alt={content.discoverTitle} className="discover-hero-photo-img" />
+              ) : (
+                <div className="editorial-photo" style={{ position: "absolute", inset: 0 }} />
+              )}
+              <span className="discover-hero-ghost">{CONFIG.storeName}</span>
+            </Reveal>
+            <div className="discover-hero-panel">
+              <Reveal delay={80} as="span" className="discover-eyebrow">{content.discoverEyebrow}</Reveal>
+              <Reveal delay={140}><h2 className="discover-title">{content.discoverTitle}</h2></Reveal>
+              <Reveal delay={200}><span className="discover-rule" /></Reveal>
+              <Reveal delay={220}><p className="discover-desc">{content.discoverText}</p></Reveal>
+              <Reveal delay={320}>
+                <button className="discover-cta" onClick={() => document.getElementById("catalogo")?.scrollIntoView({ behavior: "smooth" })}>
+                  {content.discoverCta}
+                </button>
+              </Reveal>
             </div>
-            <div className="grain" />
-            <div className="texture-overlay">
-              <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)" }}>Materiales</span></Reveal>
-              <Reveal delay={100}><h2 className="institutional-h2">Texturas que se sienten</h2></Reveal>
-            </div>
-          </section>
+          </div>
 
-          <div className="cat-banners">
+          <div className="categories-head">
+            <Reveal as="div" className="categories-heading">
+              <span className="categories-eyebrow">{content.categoriesEyebrow}</span>
+              <h2>{content.categoriesTitle}</h2>
+            </Reveal>
+            <span className="categories-rule" />
+          </div>
+          <div className="categories-grid">
             {CATEGORIES.map((c, i) => {
               const sample = products.find((p) => p.category === c);
-              const tint = COLOR_HEX[parseColors(sample || {})[0]?.parts[0]] || "#6f4e30";
+              const tint = COLOR_HEX[parseColors(sample || {})[0]?.parts[0]] || "#c9a876";
+              const photo = content.categoryImages[c];
               return (
-                <Reveal key={c} delay={i * 80} className="cat-banner-wrap">
-                  <button className="cat-banner" onClick={() => scrollToCatalog(c)}>
-                    <div className="cat-banner-media leather cat-zoom" style={{ "--tint": tint }} />
-                    <span className="cat-banner-label">{c}</span>
-                    <span className="cat-banner-btn">Ver colección</span>
+                <Reveal key={c} delay={i * 70} as="div">
+                  <button className="category-card" onClick={() => scrollToCatalog(c)}>
+                    {photo ? (
+                      <img src={photo} alt={c} className="category-card-img" />
+                    ) : (
+                      <div className="category-card-img editorial-photo" style={{ "--tint": tint }} />
+                    )}
+                    <span className="category-card-name">{c}<span className="category-card-line" /></span>
+                    <span className="category-card-arrow">→</span>
                   </button>
                 </Reveal>
               );
             })}
           </div>
 
-          {EDITORIAL[0] && (
-            <div className="editorial">
-              <Reveal className="editorial-media leather" />
-              <Reveal delay={100} className="editorial-text">
-                <h2>{EDITORIAL[0].phrase}</h2>
-                <p>{EDITORIAL[0].sub}</p>
-              </Reveal>
+          <section className="texture-section">
+            <div className="hero-bg-clip" style={{ transform: `translateY(${(scrollY - 900) * 0.15}px)` }}>
+              <CinematicVideo src={content.textureVideo} poster="/videos/texture-poster.jpg" className="texture-bg" />
             </div>
-          )}
+            <div className="grain" />
+            <div className="texture-overlay">
+              <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)" }}>{content.textureEyebrow}</span></Reveal>
+              <Reveal delay={100}><h2 className="institutional-h2">{content.textureTitle}</h2></Reveal>
+            </div>
+          </section>
 
           <div className="institutional leather">
             <div className="institutional-inner">
-              <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)", opacity: 0.85 }}>{CONFIG.storeName}</span></Reveal>
-              <Reveal delay={80}><h2 className="institutional-h2">Cada prenda, pensada para vos</h2></Reveal>
-              <Reveal delay={140}><p className="institutional-p">Elegimos materiales lindos y cuidamos cada detalle, para que tengas prendas que uses temporada tras temporada.</p></Reveal>
+              <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)", opacity: 0.85 }}>{content.institutionalEyebrow}</span></Reveal>
+              <Reveal delay={80}><h2 className="institutional-h2">{content.institutionalTitle}</h2></Reveal>
+              <Reveal delay={140}><p className="institutional-p">{content.institutionalText}</p></Reveal>
             </div>
           </div>
 
-          {EDITORIAL[1] && (
-            <div className="editorial reverse">
-              <Reveal delay={100} className="editorial-text">
-                <h2>{EDITORIAL[1].phrase}</h2>
-                <p>{EDITORIAL[1].sub}</p>
-              </Reveal>
-              <Reveal className="editorial-media leather" />
+          <div className="marquee-section">
+            <Reveal className="marquee-caption">
+              <h2>{content.marqueeTitle}</h2>
+              <p>{content.marqueeText}</p>
+            </Reveal>
+            <div className="marquee">
+              <div className="marquee-track">
+                {Array.from({ length: 16 }).map((_, i) => (
+                  <span key={i} className={`marquee-word ${i % 2 === 0 ? "w-bold" : "w-light"}`}>{CONFIG.storeName}</span>
+                ))}
+              </div>
             </div>
-          )}
+          </div>
 
-          <div className="benefits">
-            {BENEFITS.map((b, i) => (
-              <Reveal key={b.title} delay={i * 80} className="benefit">
+          <div className="benefits" id="beneficios">
+            {content.benefits.map((b, i) => (
+              <Reveal key={i} delay={i * 80} className="benefit">
                 <span className="benefit-icon">
-                  {b.icon === "truck" && <Truck size={20} />}
-                  {b.icon === "refresh" && <RefreshCcw size={20} />}
-                  {b.icon === "heart" && <Heart size={20} />}
+                  {i === 0 && <Truck size={20} />}
+                  {i === 1 && <RefreshCcw size={20} />}
+                  {i === 2 && <Heart size={20} />}
                 </span>
                 <span className="benefit-title">{b.title}</span>
                 <span className="benefit-text">{b.text}</span>
@@ -1293,7 +1688,7 @@ export default function App() {
           </div>
 
           <Reveal as="span" className="section-label" delay={0}>
-            <span id="catalogo" style={{ display: "block", paddingTop: 70 }}>Catálogo{categoryFilter ? ` — ${categoryFilter}` : ""}</span>
+            <span id="catalogo" style={{ display: "block", paddingTop: 70 }}>Nuestros favoritos{categoryFilter ? ` — ${categoryFilter}` : ""}</span>
           </Reveal>
 
           <div className="filters">
@@ -1306,11 +1701,47 @@ export default function App() {
           </div>
 
           <footer className="footer-full">
-            <div className="footer-minimal">
-              <span className="footer-copy">© Todos los derechos reservados a Adolf Indumentaria</span>
+            <div className="footer-grid">
+              <div className="footer-col footer-col-brand">
+                <div className="logo" style={{ color: "var(--ink)" }}>{CONFIG.storeName}</div>
+                <p className="footer-tagline">{content.footerTagline}</p>
+              </div>
+
+              <div className="footer-col">
+                <h4>Ayuda</h4>
+                <button className="footer-link" onClick={() => document.getElementById("beneficios")?.scrollIntoView({ behavior: "smooth" })}>Cambios y devoluciones</button>
+                <button className="footer-link" onClick={() => document.getElementById("beneficios")?.scrollIntoView({ behavior: "smooth" })}>Envíos</button>
+                <button className="footer-link">Preguntas frecuentes</button>
+              </div>
+
+              <div className="footer-col">
+                <h4>Empresa</h4>
+                <button className="footer-link" onClick={() => document.getElementById("marca")?.scrollIntoView({ behavior: "smooth" })}>Nosotros</button>
+                <a className="footer-link" href={`https://wa.me/${CONFIG.whatsappNumber}`} target="_blank" rel="noreferrer">Contacto</a>
+                <button className="footer-link">Política de privacidad</button>
+                <button className="footer-link">Términos y condiciones</button>
+              </div>
+
+              <div className="footer-col">
+                <h4>Seguinos</h4>
+                <a className="footer-link" href={CONFIG.instagram} target="_blank" rel="noreferrer">Instagram</a>
+              </div>
+
+              <div className="footer-col footer-col-news">
+                <h4>Newsletter</h4>
+                <p className="footer-news-text">Novedades y lanzamientos, directo a tu email.</p>
+                <form className="newsletter-row" onSubmit={(e) => { e.preventDefault(); setNewsletterSent(true); }}>
+                  <input type="email" required placeholder="tu@email.com" disabled={newsletterSent} />
+                  <button type="submit" disabled={newsletterSent}>{newsletterSent ? <Check size={14} /> : "Sumarme"}</button>
+                </form>
+              </div>
+            </div>
+
+            <div className="footer-bottom">
               <a href={CONFIG.instagram} target="_blank" rel="noreferrer" className="footer-ig-link">
                 <Instagram size={14} /> @adolf.ind
               </a>
+              <span className="footer-copy">© {new Date().getFullYear()} {CONFIG.storeName} · Todos los derechos reservados · Gracias por elegir ADOLF.</span>
             </div>
           </footer>
         </>
@@ -1380,7 +1811,16 @@ export default function App() {
         </div>
       )}
 
-      {view === "admin" && <AdminPage products={products} setProducts={setProducts} onExit={goStore} />}
+      {view === "admin" && (
+        <AdminPage
+          products={products}
+          setProducts={setProducts}
+          onExit={goStore}
+          content={content}
+          categories={CATEGORIES}
+          onSaveContent={handleSaveContent}
+        />
+      )}
 
       {cartOpen && (
         <>
