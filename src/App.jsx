@@ -24,11 +24,6 @@ const CONFIG = {
   // reemplaza un login real con backend.
   adminPassword: "adolf2026",
   instagram: "https://www.instagram.com/adolf.ind/",
-  schedule: "Lunes a viernes de 10 a 18 h",
-  address: "Retiro a coordinar por WhatsApp",
-  // 🎬 Videos cinematográficos — ya cargados con tus clips.
-  heroVideo: "/videos/hero.mp4",
-  textureVideo: "/videos/texture.mp4",
 };
 
 const COLOR_HEX = {
@@ -117,14 +112,18 @@ async function uploadImage(file) {
    Si todavía no existe la tabla "site_settings" en Supabase, o está
    vacía, se usan estos valores por defecto.
    ============================================================ */
+// Si reemplazás /public/videos/hero.mp4 o texture.mp4 por un archivo nuevo
+// con el mismo nombre, subí este número: así el navegador y el CDN no se
+// quedan sirviendo la copia vieja desde la caché. Con el panel de admin
+// (pestaña "Contenido del sitio") esto no hace falta: cada video que subís
+// ahí ya tiene una URL única.
+const ASSET_VERSION = "2";
 const DEFAULT_CONTENT = {
-  heroVideo: "/videos/hero.mp4",
+  heroVideo: `/videos/hero.mp4?v=${ASSET_VERSION}`,
   heroEyebrow: "Colección de temporada",
   heroTitle: "Estilo que habla por vos.",
   heroSubtitle: "Diseños seleccionados para acompañarte todos los días.",
   heroCta: "Ver colección",
-  stripTitle: "Hecho para durar",
-  stripText: "Cada detalle hace la diferencia.",
   discoverImage: "",
   discoverEyebrow: "Colección 26",
   discoverTitle: "Nueva colección",
@@ -133,20 +132,14 @@ const DEFAULT_CONTENT = {
   categoriesEyebrow: "Explorá",
   categoriesTitle: "Nuestras categorías",
   categoryImages: {},
-  textureVideo: "/videos/texture.mp4",
+  textureVideo: `/videos/texture.mp4?v=${ASSET_VERSION}`,
   textureEyebrow: "Materiales",
   textureTitle: "Texturas que se sienten",
-  institutionalEyebrow: "ADOLF",
-  institutionalTitle: "Cada prenda, pensada para vos",
-  institutionalText: "Elegimos materiales lindos y cuidamos cada detalle, para que tengas prendas que uses temporada tras temporada.",
-  marqueeTitle: "Para todos los días",
-  marqueeText: "Prendas simples y cómodas, pensadas para acompañarte",
   benefits: [
     { title: "Envíos a todo el país", text: "Enviamos a todo el país de forma rápida y segura" },
     { title: "Cambios sin complicaciones", text: "Cambios dentro de los 7 días posteriores a la compra" },
     { title: "Hecho con dedicación", text: "Cada prenda, pieza por pieza" },
   ],
-  footerTagline: "Estilo que habla por vos.",
 };
 
 async function fetchSiteContent() {
@@ -192,12 +185,20 @@ function Reveal({ children, delay = 0, className = "", as = "div" }) {
    LetterReveal — título que aparece letra por letra
    ============================================================ */
 function LetterReveal({ text, className = "", tag: Tag = "h1", baseDelay = 0, step = 0.02 }) {
+  const words = text.split(" ");
+  let i = 0;
   return (
     <Tag className={`letters ${className}`} aria-label={text}>
-      {text.split("").map((ch, i) => (
-        <span key={i} style={{ animationDelay: `${baseDelay + i * step}s` }}>
-          {ch === " " ? "\u00A0" : ch}
-        </span>
+      {words.map((word, wi) => (
+        <React.Fragment key={wi}>
+          <span className="letters-word">
+            {word.split("").map((ch) => {
+              const idx = i++;
+              return <span key={idx} style={{ animationDelay: `${baseDelay + idx * step}s` }}>{ch}</span>;
+            })}
+          </span>
+          {wi < words.length - 1 ? " " : ""}
+        </React.Fragment>
       ))}
     </Tag>
   );
@@ -575,12 +576,6 @@ function SiteContentEditor({ content, categories, onSave }) {
       </div>
 
       <div className="content-section">
-        <h3>Frase "Hecho para durar"</h3>
-        <div className="content-field"><label>Título</label><input className="admin-input" value={form.stripTitle} onChange={(e) => update("stripTitle", e.target.value)} /></div>
-        <div className="content-field"><label>Texto</label><input className="admin-input" value={form.stripText} onChange={(e) => update("stripText", e.target.value)} /></div>
-      </div>
-
-      <div className="content-section">
         <h3>Nueva colección</h3>
         <MediaField
           label="Foto principal"
@@ -614,19 +609,6 @@ function SiteContentEditor({ content, categories, onSave }) {
       </div>
 
       <div className="content-section">
-        <h3>Banner institucional</h3>
-        <div className="content-field"><label>Texto pequeño</label><input className="admin-input" value={form.institutionalEyebrow} onChange={(e) => update("institutionalEyebrow", e.target.value)} /></div>
-        <div className="content-field"><label>Título</label><input className="admin-input" value={form.institutionalTitle} onChange={(e) => update("institutionalTitle", e.target.value)} /></div>
-        <div className="content-field"><label>Texto</label><textarea className="admin-input" rows={2} value={form.institutionalText} onChange={(e) => update("institutionalText", e.target.value)} /></div>
-      </div>
-
-      <div className="content-section">
-        <h3>Sección "Para todos los días"</h3>
-        <div className="content-field"><label>Título</label><input className="admin-input" value={form.marqueeTitle} onChange={(e) => update("marqueeTitle", e.target.value)} /></div>
-        <div className="content-field"><label>Texto</label><input className="admin-input" value={form.marqueeText} onChange={(e) => update("marqueeText", e.target.value)} /></div>
-      </div>
-
-      <div className="content-section">
         <h3>Beneficios</h3>
         {form.benefits.map((b, i) => (
           <div className="content-benefit-row" key={i}>
@@ -635,11 +617,6 @@ function SiteContentEditor({ content, categories, onSave }) {
             <input className="admin-input" value={b.text} onChange={(e) => updateBenefit(i, "text", e.target.value)} placeholder="Texto" />
           </div>
         ))}
-      </div>
-
-      <div className="content-section">
-        <h3>Pie de página</h3>
-        <div className="content-field"><label>Frase debajo del logo</label><input className="admin-input" value={form.footerTagline} onChange={(e) => update("footerTagline", e.target.value)} /></div>
       </div>
 
       <button className="admin-save wide" disabled={saving} onClick={handleSave}>
@@ -849,9 +826,12 @@ export default function App() {
   }, []);
 
   const [siteContentRaw, setSiteContentRaw] = useState(null);
+  const [contentLoading, setContentLoading] = useState(true);
   useEffect(() => {
     let alive = true;
-    fetchSiteContent().then((data) => { if (alive) setSiteContentRaw(data); });
+    fetchSiteContent()
+      .then((data) => { if (alive) setSiteContentRaw(data); })
+      .finally(() => { if (alive) setContentLoading(false); });
     return () => { alive = false; };
   }, []);
   const content = useMemo(() => ({
@@ -873,7 +853,6 @@ export default function App() {
   const [activeProduct, setActiveProduct] = useState(null);
   const [buyer, setBuyer] = useState({ nombre: "", telefono: "", entrega: "envio", direccion: "", notas: "" });
   const [comprobante, setComprobante] = useState(null);
-  const [newsletterSent, setNewsletterSent] = useState(false);
   const fileRef = useRef(null);
 
   const [scrolled, setScrolled] = useState(false);
@@ -979,7 +958,7 @@ export default function App() {
 
   const headerTransparent = view === "store" && !scrolled && !mobileOpen;
 
-  if (productsLoading) {
+  if (productsLoading || contentLoading) {
     return (
       <div className="app">
         <style>{`.app{font-family:'Inter',sans-serif;background:#F8F1E8;color:#5B4027;min-height:100vh;display:flex;align-items:center;justify-content:center;}
@@ -1093,7 +1072,6 @@ export default function App() {
         .mobile-nav.open .mobile-nav-list button:nth-child(4){ transition-delay:.2s; }
         .mobile-nav.open .mobile-nav-list button:nth-child(5){ transition-delay:.24s; }
         .mobile-nav.open .mobile-nav-list button:nth-child(n+6){ transition-delay:.28s; }
-        .mobile-nav-idx{ font-family:'Inter',sans-serif; font-size:11px; letter-spacing:0.04em; color:var(--taupe); min-width:20px; }
         .mobile-nav-foot{ padding:20px 24px; border-top:1px solid var(--line); flex-shrink:0; }
 
         /* ---------- Grano de película ---------- */
@@ -1103,7 +1081,8 @@ export default function App() {
         }
 
         /* ---------- Título letra por letra ---------- */
-        .letters{ font-family:var(--serif); font-size:clamp(32px,7vw,74px); font-weight:500; text-transform:uppercase; letter-spacing:0.05em; line-height:1.08; margin:0 0 18px; }
+        .letters{ font-family:var(--serif); font-size:clamp(30px,6.5vw,74px); font-weight:500; text-transform:uppercase; letter-spacing:0.05em; line-height:1.15; margin:0 0 18px; max-width:100%; overflow-wrap:break-word; }
+        .letters-word{ display:inline-block; }
         .letters span{ display:inline-block; opacity:0; transform:translateY(12px); animation:letterIn .4s var(--ease) forwards; }
         @keyframes letterIn{ to{ opacity:1; transform:translateY(0); } }
 
@@ -1114,7 +1093,7 @@ export default function App() {
         .hero-zoom{ animation:heroZoom 18s ease-in-out infinite alternate; }
         @keyframes heroZoom{ from{ transform:scale(1); } to{ transform:scale(1.12); } }
         .hero-veil{ position:absolute; inset:0; z-index:1; background:rgba(20,15,10,0.2); }
-        .hero-content{ position:relative; z-index:2; text-align:center; color:var(--cream); padding:0 24px; }
+        .hero-content{ position:relative; z-index:2; text-align:center; color:var(--cream); padding:0 24px; max-width:760px; margin:0 auto; display:flex; flex-direction:column; align-items:center; }
         .hero-eyebrow{ font-size:11px; letter-spacing:0.4em; text-transform:uppercase; margin-bottom:22px; opacity:0.85; }
         .hero-title{ color:var(--cream); }
         .hero p{ font-size:15px; max-width:440px; margin:0 auto 34px; opacity:0.85; line-height:1.7; }
@@ -1129,14 +1108,11 @@ export default function App() {
         @keyframes scrollLine{ to{ top:100%; } }
 
         .section-label{ font-size:11px; letter-spacing:0.28em; text-transform:uppercase; color:var(--taupe); padding:0 28px; max-width:1200px; margin:0 auto; display:block; margin-bottom:20px; font-weight:600; }
-        .strip{ padding:70px 28px 16px; max-width:1200px; margin:0 auto; text-align:center; }
-        .strip h2{ font-family:var(--serif); font-size:clamp(26px,4vw,38px); text-transform:uppercase; letter-spacing:0.05em; color:var(--ink); margin:0 0 14px; }
-        .strip p{ max-width:480px; margin:0 auto; font-size:14px; line-height:1.7; opacity:0.75; }
-
         /* ---------- Sección cinematográfica intermedia ---------- */
-        .texture-section{ position:relative; height:80vh; min-height:460px; margin-top:70px; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+        .texture-section{ max-width:1200px; margin:70px auto; padding:0 28px; }
+        .texture-frame{ position:relative; height:46vh; min-height:280px; max-height:460px; border-radius:20px; overflow:hidden; }
         .texture-bg{ animation:heroZoom 20s ease-in-out infinite alternate; }
-        .texture-overlay{ position:relative; z-index:2; text-align:center; color:var(--cream); padding:0 24px; }
+        .texture-overlay{ position:relative; z-index:2; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; color:var(--cream); padding:0 24px; }
 
         /* ---------- Fotografía editorial (placeholder cálido, sin foto real) ---------- */
         .editorial-photo{ position:relative; overflow:hidden;
@@ -1169,7 +1145,7 @@ export default function App() {
         .categories-eyebrow{ display:block; font-size:11px; letter-spacing:0.3em; text-transform:uppercase; color:var(--taupe); margin-bottom:10px; }
         .categories-heading h2{ font-family:var(--serif); font-size:clamp(24px,3.4vw,34px); text-transform:uppercase; letter-spacing:0.04em; color:var(--ink); margin:0; }
         .categories-rule{ flex:1; height:1px; background:var(--line); }
-        .categories-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:14px; max-width:1200px; margin:0 auto; padding:0 28px; }
+        .categories-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:14px; max-width:1200px; margin:0 auto 90px; padding:0 28px; }
         .category-card{ position:relative; display:block; width:100%; height:380px; border:none; padding:0; border-radius:18px; overflow:hidden; cursor:pointer; box-shadow:0 14px 28px -20px rgba(69,46,26,0.35); }
         .category-card-img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transition:transform .45s var(--ease); }
         .category-card:hover .category-card-img{ transform:scale(1.04); }
@@ -1182,22 +1158,15 @@ export default function App() {
 
         /* ---------- Marquee de marca ---------- */
         .marquee-section{ margin-top:70px; }
-        .marquee-caption{ max-width:1200px; margin:0 auto 26px; padding:0 28px; text-align:center; }
-        .marquee-caption h2{ font-family:var(--serif); font-size:clamp(22px,3.4vw,32px); text-transform:uppercase; letter-spacing:0.05em; color:var(--ink); margin:0 0 8px; }
-        .marquee-caption p{ font-size:14px; opacity:0.65; }
-        .marquee{ overflow:hidden; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:20px 0; }
-        .marquee-track{ display:flex; width:max-content; gap:52px; animation:marqueeScroll 24s linear infinite; }
-        .marquee:hover .marquee-track{ animation-play-state:paused; }
-        .marquee-word{ font-family:var(--serif); font-size:clamp(36px,7vw,96px); text-transform:uppercase; letter-spacing:0.02em; line-height:1; white-space:nowrap; }
+        .marquee{ overflow:hidden; border-top:1px solid var(--line); border-bottom:1px solid var(--line); padding:16px 0; }
+        .marquee-track{ display:flex; width:max-content; gap:42px; animation:marqueeScroll 24s linear infinite; }
+        .marquee-word{ font-family:var(--serif); font-size:clamp(29px,5.6vw,77px); text-transform:uppercase; letter-spacing:0.02em; line-height:1; white-space:nowrap; }
         .marquee-word.w-bold{ font-weight:700; color:var(--ink); opacity:1; }
         .marquee-word.w-light{ font-weight:400; color:transparent; opacity:0.4; -webkit-text-stroke:1px var(--ink); }
         @keyframes marqueeScroll{ from{ transform:translateX(0); } to{ transform:translateX(-50%); } }
         @media (prefers-reduced-motion: reduce){ .marquee-track{ animation:none; } }
-        /* ---------- Banner institucional ---------- */
-        .institutional{ position:relative; margin-top:70px; padding:90px 28px; display:flex; align-items:center; justify-content:center; }
-        .institutional-inner{ position:relative; z-index:2; max-width:620px; text-align:center; color:var(--cream); }
+        /* .institutional-h2 se reutiliza en la sección de texturas */
         .institutional-h2{ font-family:var(--serif); font-size:clamp(26px,4vw,36px); text-transform:uppercase; letter-spacing:0.04em; margin:16px 0 18px; line-height:1.2; }
-        .institutional-p{ font-size:14px; line-height:1.8; opacity:0.9; }
 
         /* ---------- Beneficios ---------- */
 
@@ -1335,22 +1304,8 @@ export default function App() {
         .new-order-btn:hover{ transform:translateY(-2px); }
 
         /* ---------- Footer ---------- */
-        .footer-full{ border-top:1px solid var(--line); padding:80px 28px 30px; }
-        .footer-grid{ max-width:1200px; margin:0 auto; display:grid; grid-template-columns:1.3fr 1fr 1fr 0.8fr 1.3fr; gap:32px; margin-bottom:46px; }
-        .footer-col{ display:flex; flex-direction:column; align-items:flex-start; gap:11px; }
-        .footer-col h4{ font-family:var(--serif); font-size:12px; text-transform:uppercase; letter-spacing:0.16em; margin:0 0 4px; color:var(--ink); }
-        .footer-col-brand{ gap:10px; }
-        .footer-tagline{ font-size:12px; color:var(--ink); opacity:0.65; line-height:1.5; max-width:220px; }
-        .footer-link{ background:none; border:none; font-size:12.5px; color:var(--ink); opacity:0.7; padding:0; text-align:left; text-decoration:none; transition:opacity .2s var(--ease); }
-        .footer-link:hover{ opacity:1; text-decoration:underline; }
-        .footer-news-text{ font-size:12px; color:var(--ink); opacity:0.65; margin-bottom:2px; }
-        .newsletter-row{ display:flex; border:1px solid var(--line); border-radius:999px; overflow:hidden; width:100%; box-shadow:0 6px 14px -10px rgba(69,46,26,0.3); }
-        .newsletter-row input{ flex:1; min-width:0; border:none; background:var(--cream); padding:10px 14px; font-size:12px; color:var(--ink); }
-        .newsletter-row input:focus{ outline:none; }
-        .newsletter-row button{ background:var(--ink); color:var(--cream); border:none; padding:0 18px; font-size:11px; letter-spacing:0.06em; transition:background .2s var(--ease); }
-        .newsletter-row button:hover:not(:disabled){ background:var(--walnut); }
-        .newsletter-row button:disabled{ opacity:0.6; }
-        .footer-bottom{ max-width:1200px; margin:0 auto; border-top:1px solid var(--line); padding-top:24px; display:flex; flex-wrap:wrap-reverse; gap:16px; align-items:center; justify-content:space-between; }
+        .footer-full{ border-top:1px solid var(--line); padding:56px 28px; }
+        .footer-mini{ max-width:1200px; margin:0 auto; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; text-align:center; }
         .footer-copy{ font-size:11px; letter-spacing:0.06em; color:var(--taupe); }
         .footer-ig-link{ display:inline-flex; align-items:center; gap:6px; background:var(--oat); color:var(--ink); padding:8px 16px; border-radius:999px; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; box-shadow:0 6px 14px -8px rgba(69,46,26,0.4); transition:transform .2s var(--ease), background .2s var(--ease), box-shadow .2s var(--ease); }
         .footer-ig-link:hover{ background:var(--sand); transform:translateY(-2px); box-shadow:0 10px 20px -8px rgba(69,46,26,0.45); }
@@ -1425,16 +1380,17 @@ export default function App() {
           .categories-head{ margin:60px auto 24px; }
           .categories-grid{ grid-template-columns:repeat(3,1fr); }
           .category-card{ height:260px; }
-          .institutional{ margin-top:50px; padding:64px 24px; }
-          .texture-section{ height:60vh; margin-top:50px; }
+          .texture-section{ margin:50px auto; }
+          .texture-frame{ height:38vh; min-height:240px; }
           .marquee-section{ margin-top:50px; }
-          .footer-grid{ grid-template-columns:1fr 1fr; gap:30px; }
-          .footer-col-brand{ grid-column:1 / -1; }
         }
         @media (max-width:640px){
           .hero{ min-height:560px; }
-          .letters{ font-size:clamp(28px,9vw,74px); margin-bottom:14px; }
-          .strip{ padding:50px 16px 6px; }
+          .hero-content{ padding:0 20px; }
+          .hero-eyebrow{ letter-spacing:0.22em; margin-bottom:16px; }
+          .letters{ font-size:clamp(26px,9vw,74px); margin-bottom:14px; }
+          .hero p{ max-width:100%; font-size:14px; }
+          .hero-cta{ padding:14px 28px; }
           .discover-hero{ padding:0 16px; }
           .discover-hero-photo{ min-height:260px; }
           .discover-hero-panel{ padding:32px 22px; }
@@ -1444,14 +1400,11 @@ export default function App() {
           .categories-rule{ display:none; }
           .categories-grid{ grid-template-columns:repeat(2,1fr); gap:12px; padding:0 16px; }
           .category-card{ height:220px; }
-          .marquee-word{ font-size:clamp(30px,11vw,96px); }
-          .marquee-track{ gap:34px; }
+          .marquee-word{ font-size:clamp(24px,8.8vw,77px); }
+          .marquee-track{ gap:27px; }
           .benefits{ grid-template-columns:1fr; padding:44px 24px; gap:26px; }
           .related{ margin-top:50px; }
-          .footer-full{ padding:56px 20px 26px; }
-          .footer-grid{ grid-template-columns:1fr 1fr; gap:28px; margin-bottom:32px; }
-          .footer-col-brand{ grid-column:1 / -1; }
-          .footer-bottom{ flex-direction:column; text-align:center; justify-content:center; }
+          .footer-full{ padding:44px 20px; }
           .catalog{ grid-template-columns:1fr 1fr; gap:16px 12px; padding:0 16px 60px; }
           .related-grid{ padding:0; }
           .pcard-media{ height:0; padding-bottom:130%; border-radius:12px; }
@@ -1463,7 +1416,7 @@ export default function App() {
           .pcard-hover{ padding:12px 10px; gap:8px; }
           .pcard-hover-name{ font-size:13px; }
           .quick-add{ padding:9px 12px; font-size:9px; width:100%; justify-content:center; }
-          .section-label, .filters, .strip{ padding-left:16px; padding-right:16px; }
+          .section-label, .filters{ padding-left:16px; padding-right:16px; }
           .filters{ gap:8px; }
           .filter-chip{ padding:7px 13px; font-size:10px; }
         }
@@ -1473,8 +1426,6 @@ export default function App() {
         }
         @media (max-width:520px){
           .drawer{ border-radius:0; }
-          .footer-grid{ grid-template-columns:1fr; }
-          .footer-col, .footer-col-brand{ align-items:flex-start; }
         }
       `}</style>
 
@@ -1539,11 +1490,9 @@ export default function App() {
               <button className="icon-btn" onClick={() => setMobileOpen(false)}><X size={18} /></button>
             </div>
             <nav className="mobile-nav-list">
-              <button onClick={() => scrollToCatalog(null)}><span className="mobile-nav-idx">00</span> Ver todo</button>
-              {CATEGORIES.map((c, i) => (
-                <button key={c} onClick={() => scrollToCatalog(c)}>
-                  <span className="mobile-nav-idx">{String(i + 1).padStart(2, "0")}</span> {c}
-                </button>
+              <button onClick={() => scrollToCatalog(null)}>Ver todo</button>
+              {CATEGORIES.map((c) => (
+                <button key={c} onClick={() => scrollToCatalog(c)}>{c}</button>
               ))}
             </nav>
             <div className="mobile-nav-foot">
@@ -1559,7 +1508,7 @@ export default function App() {
         <>
           <section className="hero">
             <div className="hero-bg-clip" style={{ transform: `translateY(${scrollY * 0.28}px)` }}>
-              <CinematicVideo src={content.heroVideo} poster="/videos/hero-poster.jpg" priority className="hero-bg" />
+              <CinematicVideo src={content.heroVideo} poster={`/videos/hero-poster.jpg?v=${ASSET_VERSION}`} priority className="hero-bg" />
             </div>
             <div className="grain" />
             <div className="hero-veil" />
@@ -1584,33 +1533,6 @@ export default function App() {
             </motion.div>
             <div className="hero-scroll" />
           </section>
-
-          <div className="strip" id="marca">
-            <Reveal><h2>{content.stripTitle}</h2></Reveal>
-            <Reveal delay={80}><p>{content.stripText}</p></Reveal>
-          </div>
-
-          <div className="discover-hero">
-            <Reveal className="discover-hero-photo" as="div">
-              {content.discoverImage ? (
-                <img src={content.discoverImage} alt={content.discoverTitle} className="discover-hero-photo-img" />
-              ) : (
-                <div className="editorial-photo" style={{ position: "absolute", inset: 0 }} />
-              )}
-              <span className="discover-hero-ghost">{CONFIG.storeName}</span>
-            </Reveal>
-            <div className="discover-hero-panel">
-              <Reveal delay={80} as="span" className="discover-eyebrow">{content.discoverEyebrow}</Reveal>
-              <Reveal delay={140}><h2 className="discover-title">{content.discoverTitle}</h2></Reveal>
-              <Reveal delay={200}><span className="discover-rule" /></Reveal>
-              <Reveal delay={220}><p className="discover-desc">{content.discoverText}</p></Reveal>
-              <Reveal delay={320}>
-                <button className="discover-cta" onClick={() => document.getElementById("catalogo")?.scrollIntoView({ behavior: "smooth" })}>
-                  {content.discoverCta}
-                </button>
-              </Reveal>
-            </div>
-          </div>
 
           <div className="categories-head">
             <Reveal as="div" className="categories-heading">
@@ -1640,30 +1562,29 @@ export default function App() {
             })}
           </div>
 
-          <section className="texture-section">
-            <div className="hero-bg-clip" style={{ transform: `translateY(${(scrollY - 900) * 0.15}px)` }}>
-              <CinematicVideo src={content.textureVideo} poster="/videos/texture-poster.jpg" className="texture-bg" />
-            </div>
-            <div className="grain" />
-            <div className="texture-overlay">
-              <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)" }}>{content.textureEyebrow}</span></Reveal>
-              <Reveal delay={100}><h2 className="institutional-h2">{content.textureTitle}</h2></Reveal>
-            </div>
-          </section>
-
-          <div className="institutional leather">
-            <div className="institutional-inner">
-              <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)", opacity: 0.85 }}>{content.institutionalEyebrow}</span></Reveal>
-              <Reveal delay={80}><h2 className="institutional-h2">{content.institutionalTitle}</h2></Reveal>
-              <Reveal delay={140}><p className="institutional-p">{content.institutionalText}</p></Reveal>
+          <div className="discover-hero" id="marca">
+            <Reveal className="discover-hero-photo" as="div">
+              {content.discoverImage ? (
+                <img src={content.discoverImage} alt={content.discoverTitle} className="discover-hero-photo-img" />
+              ) : (
+                <div className="editorial-photo" style={{ position: "absolute", inset: 0 }} />
+              )}
+              <span className="discover-hero-ghost">{CONFIG.storeName}</span>
+            </Reveal>
+            <div className="discover-hero-panel">
+              <Reveal delay={80} as="span" className="discover-eyebrow">{content.discoverEyebrow}</Reveal>
+              <Reveal delay={140}><h2 className="discover-title">{content.discoverTitle}</h2></Reveal>
+              <Reveal delay={200}><span className="discover-rule" /></Reveal>
+              <Reveal delay={220}><p className="discover-desc">{content.discoverText}</p></Reveal>
+              <Reveal delay={320}>
+                <button className="discover-cta" onClick={() => document.getElementById("catalogo")?.scrollIntoView({ behavior: "smooth" })}>
+                  {content.discoverCta}
+                </button>
+              </Reveal>
             </div>
           </div>
 
           <div className="marquee-section">
-            <Reveal className="marquee-caption">
-              <h2>{content.marqueeTitle}</h2>
-              <p>{content.marqueeText}</p>
-            </Reveal>
             <div className="marquee">
               <div className="marquee-track">
                 {Array.from({ length: 16 }).map((_, i) => (
@@ -1671,20 +1592,6 @@ export default function App() {
                 ))}
               </div>
             </div>
-          </div>
-
-          <div className="benefits" id="beneficios">
-            {content.benefits.map((b, i) => (
-              <Reveal key={i} delay={i * 80} className="benefit">
-                <span className="benefit-icon">
-                  {i === 0 && <Truck size={20} />}
-                  {i === 1 && <RefreshCcw size={20} />}
-                  {i === 2 && <Heart size={20} />}
-                </span>
-                <span className="benefit-title">{b.title}</span>
-                <span className="benefit-text">{b.text}</span>
-              </Reveal>
-            ))}
           </div>
 
           <Reveal as="span" className="section-label" delay={0}>
@@ -1700,48 +1607,38 @@ export default function App() {
             {filteredProducts.map((p, i) => <ProductCard key={p.id} product={p} onOpen={openProduct} onQuickAdd={quickAdd} delay={(i % 6) * 70} />)}
           </div>
 
-          <footer className="footer-full">
-            <div className="footer-grid">
-              <div className="footer-col footer-col-brand">
-                <div className="logo" style={{ color: "var(--ink)" }}>{CONFIG.storeName}</div>
-                <p className="footer-tagline">{content.footerTagline}</p>
-              </div>
-
-              <div className="footer-col">
-                <h4>Ayuda</h4>
-                <button className="footer-link" onClick={() => document.getElementById("beneficios")?.scrollIntoView({ behavior: "smooth" })}>Cambios y devoluciones</button>
-                <button className="footer-link" onClick={() => document.getElementById("beneficios")?.scrollIntoView({ behavior: "smooth" })}>Envíos</button>
-                <button className="footer-link">Preguntas frecuentes</button>
-              </div>
-
-              <div className="footer-col">
-                <h4>Empresa</h4>
-                <button className="footer-link" onClick={() => document.getElementById("marca")?.scrollIntoView({ behavior: "smooth" })}>Nosotros</button>
-                <a className="footer-link" href={`https://wa.me/${CONFIG.whatsappNumber}`} target="_blank" rel="noreferrer">Contacto</a>
-                <button className="footer-link">Política de privacidad</button>
-                <button className="footer-link">Términos y condiciones</button>
-              </div>
-
-              <div className="footer-col">
-                <h4>Seguinos</h4>
-                <a className="footer-link" href={CONFIG.instagram} target="_blank" rel="noreferrer">Instagram</a>
-              </div>
-
-              <div className="footer-col footer-col-news">
-                <h4>Newsletter</h4>
-                <p className="footer-news-text">Novedades y lanzamientos, directo a tu email.</p>
-                <form className="newsletter-row" onSubmit={(e) => { e.preventDefault(); setNewsletterSent(true); }}>
-                  <input type="email" required placeholder="tu@email.com" disabled={newsletterSent} />
-                  <button type="submit" disabled={newsletterSent}>{newsletterSent ? <Check size={14} /> : "Sumarme"}</button>
-                </form>
+          <section className="texture-section">
+            <div className="texture-frame">
+              <CinematicVideo src={content.textureVideo} poster={`/videos/texture-poster.jpg?v=${ASSET_VERSION}`} className="texture-bg" />
+              <div className="grain" />
+              <div className="texture-overlay">
+                <Reveal><span className="hero-eyebrow" style={{ color: "var(--cream)" }}>{content.textureEyebrow}</span></Reveal>
+                <Reveal delay={100}><h2 className="institutional-h2">{content.textureTitle}</h2></Reveal>
               </div>
             </div>
+          </section>
 
-            <div className="footer-bottom">
+          <div className="benefits">
+            {content.benefits.map((b, i) => (
+              <Reveal key={i} delay={i * 80} className="benefit">
+                <span className="benefit-icon">
+                  {i === 0 && <Truck size={20} />}
+                  {i === 1 && <RefreshCcw size={20} />}
+                  {i === 2 && <Heart size={20} />}
+                </span>
+                <span className="benefit-title">{b.title}</span>
+                <span className="benefit-text">{b.text}</span>
+              </Reveal>
+            ))}
+          </div>
+
+          <footer className="footer-full">
+            <div className="footer-mini">
+              <div className="logo" style={{ color: "var(--ink)" }}>{CONFIG.storeName}</div>
               <a href={CONFIG.instagram} target="_blank" rel="noreferrer" className="footer-ig-link">
                 <Instagram size={14} /> @adolf.ind
               </a>
-              <span className="footer-copy">© {new Date().getFullYear()} {CONFIG.storeName} · Todos los derechos reservados · Gracias por elegir ADOLF.</span>
+              <span className="footer-copy">© {new Date().getFullYear()} · Derechos reservados a Adolf Indumentaria</span>
             </div>
           </footer>
         </>
