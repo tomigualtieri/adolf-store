@@ -3,7 +3,7 @@ import { motion } from "framer-motion";
 import {
   ShoppingBag, X, Plus, Minus, Check, Upload, ArrowLeft,
   Search, Menu, Trash2, Lock, Pencil, ImagePlus,
-  Instagram, Truck, RefreshCcw, Heart,
+  Instagram, Truck, RefreshCcw, Heart, Tag, Percent, Package,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -22,7 +22,7 @@ const CONFIG = {
   // ⚠️ Cambiá esta clave por una propia. Es un candado simple del lado del
   // navegador: alcanza para que no cualquiera edite el catálogo, pero no
   // reemplaza un login real con backend.
-  adminPassword: "adolf2026",
+  adminPassword: "adolf1924#",
   instagram: "https://www.instagram.com/adolf.ind/",
 };
 
@@ -73,6 +73,13 @@ const money = (n) =>
 
 const parseColors = (product) => (product.colors || []).map((c) => (typeof c === "string" ? { label: c, parts: splitColors(c) } : c));
 
+/* Precio final de un producto, aplicando su descuento individual si está activo */
+const productDiscountPct = (product) => (product.discount_active && product.discount_percent > 0 ? Math.min(90, product.discount_percent) : 0);
+const finalPrice = (product) => {
+  const pct = productDiscountPct(product);
+  return pct > 0 ? Math.round((product.price || 0) * (1 - pct / 100)) : (product.price || 0);
+};
+
 /* ---------- Supabase: catálogo ---------- */
 async function fetchProducts() {
   const { data, error } = await supabase.from("products").select("*").order("created_at", { ascending: true });
@@ -104,6 +111,86 @@ async function uploadImage(file) {
   if (error) throw error;
   const { data } = supabase.storage.from("product-images").getPublicUrl(path);
   return data.publicUrl;
+}
+
+/* ---------- Supabase: cupones ---------- */
+async function fetchCoupons() {
+  const { data, error } = await supabase.from("coupons").select("*").order("created_at", { ascending: false });
+  if (error) throw error;
+  return data || [];
+}
+async function insertCoupon(coupon) {
+  const { data, error } = await supabase.from("coupons").insert([coupon]).select();
+  if (error) throw error;
+  return data[0];
+}
+async function updateCouponRow(id, fields) {
+  const { error } = await supabase.from("coupons").update(fields).eq("id", id);
+  if (error) throw error;
+}
+async function deleteCouponRow(id) {
+  const { error } = await supabase.from("coupons").delete().eq("id", id);
+  if (error) throw error;
+}
+async function findCouponByCode(code) {
+  const { data, error } = await supabase.from("coupons").select("*").eq("code", code.trim().toUpperCase()).maybeSingle();
+  if (error) throw error;
+  return data;
+}
+async function incrementCouponUsage(id, usedCount) {
+  const { error } = await supabase.from("coupons").update({ used_count: usedCount + 1 }).eq("id", id);
+  if (error) throw error;
+}
+
+/* ---------- Supabase: pedidos ---------- */
+async function insertOrder(order) {
+  const { data, error } = await supabase.from("orders").insert([order]).select();
+  if (error) throw error;
+  return data[0];
+}
+async function fetchOrders(limit = 200) {
+  const { data, error } = await supabase.from("orders").select("*").order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data || [];
+}
+async function updateOrderStatus(id, payment_status) {
+  const { error } = await supabase.from("orders").update({ payment_status }).eq("id", id);
+  if (error) throw error;
+}
+// Notificación por mail de cada venta. Se dispara desde una Supabase Edge
+// Function (send-order-email) para no exponer ninguna credencial de mail en
+// el navegador. Si la función no está desplegada todavía, o falla, la venta
+// ya quedó guardada en "orders" — acá solo logueamos el error.
+async function notifyNewSale(order) {
+  try {
+    const { error } = await supabase.functions.invoke("send-order-email", { body: { order } });
+    if (error) console.error("No se pudo enviar el email de notificación de venta:", error);
+  } catch (err) {
+    console.error("No se pudo enviar el email de notificación de venta:", err);
+  }
+}
+// Crea la preferencia de pago en Mercado Pago desde una Edge Function
+// (create-mp-preference), que es la única que conoce el MP_ACCESS_TOKEN.
+// Devuelve la URL (init_point) a la que hay que redirigir al comprador.
+async function createMercadoPagoPreference(order) {
+  const { data, error } = await supabase.functions.invoke("create-mp-preference", { body: { order } });
+  if (error) throw error;
+  if (!data?.init_point) throw new Error("Mercado Pago no devolvió un link de pago.");
+  return data.init_point;
+}
+
+/* ---------- Supabase: visitas (para estadísticas) ---------- */
+async function trackPageView() {
+  try {
+    await supabase.from("page_views").insert([{ path: window.location.pathname }]);
+  } catch {
+    /* no bloquear la navegación si falla el tracking */
+  }
+}
+async function fetchPageViews(limit = 500) {
+  const { data, error } = await supabase.from("page_views").select("*").order("created_at", { ascending: false }).limit(limit);
+  if (error) throw error;
+  return data || [];
 }
 
 /* ============================================================
@@ -216,6 +303,19 @@ function ColorSwatch({ parts, size = 18 }) {
   );
 }
 
+/* Precio de un producto, con precio anterior tachado y badge si tiene descuento activo */
+function PriceBlock({ product, size = "md" }) {
+  const pct = productDiscountPct(product);
+  if (!pct) return <span className={`price-tag price-${size}`}>{money(product.price)}</span>;
+  return (
+    <span className={`price-tag price-tag-off price-${size}`}>
+      <span className="price-old">{money(product.price)}</span>
+      <span className="price-new">{money(finalPrice(product))}</span>
+      <span className="price-off-badge">-{pct}%</span>
+    </span>
+  );
+}
+
 /* Medio visual del producto: usa fotos reales si hay, si no cae al cuero de marca */
 function Media({ product, className = "" }) {
   const heroColor = COLOR_HEX[parseColors(product)[0]?.parts[0]] || "#6f4e30";
@@ -262,14 +362,18 @@ function CinematicVideo({ src, poster, className = "", zoom = true, priority = f
 function ProductCard({ product, onOpen, onQuickAdd, delay = 0 }) {
   const colors = parseColors(product);
   const outOfStock = (product.stock ?? 0) <= 0;
+  const pct = productDiscountPct(product);
 
   return (
     <Reveal delay={delay} className="pcard-wrap">
       <motion.div className="pcard" whileHover={{ y: -6 }} transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}>
-        <div className="pcard-media" onClick={() => onOpen(product)}>
+        <div className={`pcard-media ${outOfStock ? "is-out" : ""}`} onClick={() => onOpen(product)}>
           <Media product={product} />
           <span className="pcard-ref">{product.ref}</span>
-          {outOfStock && <span className="stock-badge">Sin stock</span>}
+          {!outOfStock && pct > 0 && <span className="stock-badge off-badge">-{pct}%</span>}
+          {outOfStock && (
+            <div className="stock-band"><span>Agotado</span></div>
+          )}
           <div className="pcard-hover">
             <span className="pcard-hover-name">{product.name}</span>
             <button
@@ -277,7 +381,7 @@ function ProductCard({ product, onOpen, onQuickAdd, delay = 0 }) {
               disabled={outOfStock}
               onClick={(e) => { e.stopPropagation(); onQuickAdd(product); }}
             >
-              {outOfStock ? "Sin stock" : "Agregar al carrito"}
+              {outOfStock ? "Agotado" : "Agregar al carrito"}
             </button>
           </div>
         </div>
@@ -286,7 +390,7 @@ function ProductCard({ product, onOpen, onQuickAdd, delay = 0 }) {
           <h3 className="pcard-name">{product.name}</h3>
           <div className="pcard-tipo">{product.tipo}</div>
           <div className="pcard-bottom">
-            <span className="pcard-price">{money(product.price)}</span>
+            <PriceBlock product={product} size="card" />
             <span className="pcard-colors">{colors.map((c) => <ColorSwatch key={c.label} parts={c.parts} size={12} />)}</span>
           </div>
         </div>
@@ -332,14 +436,18 @@ function ProductDetail({ product, allProducts, onBack, onAdd, onOpenRelated }) {
 
       <div className="detail-grid">
         <Reveal className="gallery">
-          {imgs.length > 0 ? (
-            <img src={imgs[activeThumb] || imgs[0]} className="gallery-main-img" alt={product.name} />
-          ) : (
-            <div className="gallery-main leather" style={{ "--tint": COLOR_HEX[colors[0]?.parts[0]] || "#6f4e30" }}>
-              <div className="stitch" />
-              <span className="pcard-ref">{product.ref}</span>
-            </div>
-          )}
+          <div className={`gallery-media ${outOfStock ? "is-out" : ""}`}>
+            {imgs.length > 0 ? (
+              <img src={imgs[activeThumb] || imgs[0]} className="gallery-main-img" alt={product.name} />
+            ) : (
+              <div className="gallery-main leather" style={{ "--tint": COLOR_HEX[colors[0]?.parts[0]] || "#6f4e30" }}>
+                <div className="stitch" />
+                <span className="pcard-ref">{product.ref}</span>
+              </div>
+            )}
+            {!outOfStock && productDiscountPct(product) > 0 && <span className="stock-badge off-badge">-{productDiscountPct(product)}%</span>}
+            {outOfStock && <div className="stock-band"><span>Agotado</span></div>}
+          </div>
           {imgs.length > 1 && (
             <div className="gallery-thumbs">
               {imgs.map((src, i) => (
@@ -355,8 +463,8 @@ function ProductDetail({ product, allProducts, onBack, onAdd, onOpenRelated }) {
           <div className="pcard-cat">{product.category}</div>
           <h1 className="detail-name">{product.name}</h1>
           <div className="detail-tipo">{product.tipo}</div>
-          <div className="detail-price">{money(product.price)}</div>
-          {outOfStock && <div className="tag-error" style={{ marginBottom: 16 }}>Sin stock por el momento</div>}
+          <div className="detail-price"><PriceBlock product={product} size="lg" /></div>
+          {outOfStock && <div className="tag-error" style={{ marginBottom: 16 }}>Agotado por el momento</div>}
 
           <div className="opt-label">Color — {color}</div>
           <div className="tag-colors">
@@ -376,7 +484,7 @@ function ProductDetail({ product, allProducts, onBack, onAdd, onOpenRelated }) {
           {err && <div className="tag-error">{err}</div>}
 
           <button className={`add-cta leather ${added ? "added" : ""}`} disabled={outOfStock} onClick={handleAdd}>
-            <span className="add-cta-label default">{outOfStock ? "Sin stock" : "Agregar al carrito"}</span>
+            <span className="add-cta-label default">{outOfStock ? "Agotado" : "Agregar al carrito"}</span>
             <span className="add-cta-label success"><Check size={15} /> Agregado</span>
           </button>
 
@@ -410,6 +518,8 @@ function ProductRow({ product, onSave, onDelete }) {
     price: product.price, stock: product.stock ?? 0,
     colors: (product.colors || []).map((c) => (typeof c === "string" ? c : c.label)).join(", "),
     sizes: (product.sizes || []).join(", "),
+    discount_percent: product.discount_percent ?? 0,
+    discount_active: product.discount_active ?? false,
   });
   const [images, setImages] = useState(product.images || []);
   const [dirty, setDirty] = useState(false);
@@ -445,6 +555,8 @@ function ProductRow({ product, onSave, onDelete }) {
       colors: form.colors.split(",").map((s) => s.trim()).filter(Boolean),
       sizes: form.sizes.split(",").map((s) => s.trim()).filter(Boolean),
       images,
+      discount_percent: Math.max(0, Math.min(90, Number(form.discount_percent) || 0)),
+      discount_active: !!form.discount_active,
     });
     setDirty(false);
   };
@@ -472,6 +584,11 @@ function ProductRow({ product, onSave, onDelete }) {
         <input className="admin-input" type="number" value={form.stock} onChange={(e) => update("stock", e.target.value)} placeholder="Stock" />
         <input className="admin-input" value={form.colors} onChange={(e) => update("colors", e.target.value)} placeholder="Colores (separados por coma)" />
         <input className="admin-input" value={form.sizes} onChange={(e) => update("sizes", e.target.value)} placeholder="Talles (separados por coma)" />
+        <input className="admin-input" type="number" min="0" max="90" value={form.discount_percent} onChange={(e) => update("discount_percent", e.target.value)} placeholder="Descuento %" />
+        <label className="admin-check">
+          <input type="checkbox" checked={form.discount_active} onChange={(e) => update("discount_active", e.target.checked)} />
+          Oferta activa
+        </label>
       </div>
 
       <div className="admin-row-actions">
@@ -626,6 +743,328 @@ function SiteContentEditor({ content, categories, onSave }) {
   );
 }
 
+function CouponsPanel() {
+  const emptyCouponForm = { code: "", percent: "", expires_at: "", max_uses: "" };
+  const [coupons, setCoupons] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [busyMsg, setBusyMsg] = useState(null);
+  const [form, setForm] = useState(emptyCouponForm);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    fetchCoupons()
+      .then((data) => { if (alive) setCoupons(data); })
+      .catch((err) => { if (alive) setBusyMsg("No se pudieron cargar los cupones: " + err.message); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const createCoupon = async (e) => {
+    e.preventDefault();
+    if (!form.code.trim() || !form.percent) return;
+    setSaving(true);
+    setBusyMsg(null);
+    try {
+      const payload = {
+        code: form.code.trim().toUpperCase(),
+        percent: Math.max(1, Math.min(100, Number(form.percent) || 0)),
+        active: true,
+        expires_at: form.expires_at ? new Date(form.expires_at + "T23:59:59").toISOString() : null,
+        max_uses: form.max_uses ? Number(form.max_uses) : null,
+        used_count: 0,
+      };
+      const inserted = await insertCoupon(payload);
+      setCoupons((prev) => [inserted, ...prev]);
+      setForm(emptyCouponForm);
+    } catch (err) {
+      setBusyMsg("No se pudo crear el cupón (¿el código ya existe?): " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (c) => {
+    try {
+      await updateCouponRow(c.id, { active: !c.active });
+      setCoupons((prev) => prev.map((x) => (x.id === c.id ? { ...x, active: !x.active } : x)));
+    } catch (err) {
+      setBusyMsg("No se pudo actualizar el cupón: " + err.message);
+    }
+  };
+
+  const removeCoupon = async (id) => {
+    if (!window.confirm("¿Eliminar este cupón?")) return;
+    try {
+      await deleteCouponRow(id);
+      setCoupons((prev) => prev.filter((x) => x.id !== id));
+    } catch (err) {
+      setBusyMsg("No se pudo eliminar el cupón: " + err.message);
+    }
+  };
+
+  return (
+    <div className="promo-block">
+      <h3 className="promo-block-title"><Tag size={16} /> Cupones de descuento</h3>
+      <p className="checkout-sub">Creá códigos que tus clientas puedan ingresar en el carrito para obtener un % de descuento sobre el total de la compra.</p>
+      {busyMsg && <div className="tag-error" style={{ marginBottom: 16 }}>{busyMsg}</div>}
+
+      <form onSubmit={createCoupon} className="admin-fields admin-fields-new">
+        <input className="admin-input" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="Código (ej: VERANO20)" required />
+        <input className="admin-input" type="number" min="1" max="100" value={form.percent} onChange={(e) => setForm({ ...form, percent: e.target.value })} placeholder="% de descuento" required />
+        <input className="admin-input" type="date" value={form.expires_at} onChange={(e) => setForm({ ...form, expires_at: e.target.value })} placeholder="Vencimiento (opcional)" />
+        <input className="admin-input" type="number" min="1" value={form.max_uses} onChange={(e) => setForm({ ...form, max_uses: e.target.value })} placeholder="Usos máximos (opcional)" />
+        <button type="submit" className="admin-save wide" disabled={saving} style={{ gridColumn: "1 / -1" }}><Plus size={14} /> Crear cupón</button>
+      </form>
+
+      {loading ? (
+        <span className="mini-spinner" style={{ marginTop: 20 }} />
+      ) : coupons.length === 0 ? (
+        <p style={{ fontSize: 13, opacity: 0.65, marginTop: 22 }}>Todavía no creaste ningún cupón.</p>
+      ) : (
+        <div className="coupon-list">
+          {coupons.map((c) => (
+            <div className="coupon-list-row" key={c.id}>
+              <div className="coupon-list-info">
+                <strong>{c.code}</strong>
+                <span>{c.percent}% off</span>
+                {c.expires_at && <span className="coupon-meta">Vence {new Date(c.expires_at).toLocaleDateString("es-AR")}</span>}
+                <span className="coupon-meta">{c.used_count || 0}{c.max_uses ? `/${c.max_uses}` : ""} usos</span>
+              </div>
+              <div className="coupon-list-actions">
+                <button className={`coupon-toggle ${c.active ? "on" : ""}`} onClick={() => toggleActive(c)}>{c.active ? "Activo" : "Inactivo"}</button>
+                <button className="icon-btn" onClick={() => removeCoupon(c.id)}><Trash2 size={15} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StockDiscountPanel({ products, onSave }) {
+  return (
+    <div className="promo-block">
+      <h3 className="promo-block-title"><Percent size={16} /> Descuentos y stock por producto</h3>
+      <p className="checkout-sub">Vista rápida de todo el catálogo. Para editar nombre, fotos, colores o talles, hacelo desde la pestaña "Productos".</p>
+      <div className="promo-stock-list">
+        <div className="promo-stock-head">
+          <span>Producto</span><span>Stock</span><span>Descuento %</span><span>Oferta activa</span>
+        </div>
+        {products.map((p) => (
+          <PromoStockRow key={p.id} product={p} onSave={onSave} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PromoStockRow({ product, onSave }) {
+  const [stock, setStock] = useState(product.stock ?? 0);
+  const [pct, setPct] = useState(product.discount_percent ?? 0);
+  const [active, setActive] = useState(product.discount_active ?? false);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  const commit = async (fields) => {
+    setSaving(true);
+    try {
+      await onSave(product.id, { ...product, stock, discount_percent: pct, discount_active: active, ...fields });
+      setDirty(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="promo-stock-row">
+      <span className="promo-stock-name">{product.name}</span>
+      <input
+        className="admin-input"
+        type="number" min="0"
+        value={stock}
+        onChange={(e) => { setStock(e.target.value); setDirty(true); }}
+        onBlur={() => dirty && commit({ stock: Number(stock) || 0 })}
+      />
+      <input
+        className="admin-input"
+        type="number" min="0" max="90"
+        value={pct}
+        onChange={(e) => { setPct(e.target.value); setDirty(true); }}
+        onBlur={() => dirty && commit({ discount_percent: Math.max(0, Math.min(90, Number(pct) || 0)) })}
+      />
+      <label className="admin-check promo-stock-check">
+        <input
+          type="checkbox"
+          checked={active}
+          disabled={saving}
+          onChange={(e) => { setActive(e.target.checked); commit({ discount_active: e.target.checked }); }}
+        />
+      </label>
+    </div>
+  );
+}
+
+function PromotionsPanel({ products, onSaveProduct }) {
+  const [sub, setSub] = useState("coupons");
+  return (
+    <div className="promo-panel">
+      <div className="promo-subtabs">
+        <button className={`promo-subtab ${sub === "coupons" ? "active" : ""}`} onClick={() => setSub("coupons")}><Tag size={14} /> Cupones</button>
+        <button className={`promo-subtab ${sub === "stock" ? "active" : ""}`} onClick={() => setSub("stock")}><Package size={14} /> Descuentos y stock</button>
+      </div>
+      {sub === "coupons" ? <CouponsPanel /> : <StockDiscountPanel products={products} onSave={onSaveProduct} />}
+    </div>
+  );
+}
+
+function StatCard({ label, value }) {
+  return (
+    <div className="stat-card">
+      <span className="stat-card-value">{value}</span>
+      <span className="stat-card-label">{label}</span>
+    </div>
+  );
+}
+
+function StatsPanel() {
+  const [orders, setOrders] = useState([]);
+  const [views, setViews] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState(null);
+
+  useEffect(() => {
+    let alive = true;
+    Promise.all([fetchOrders(), fetchPageViews()])
+      .then(([o, v]) => { if (alive) { setOrders(o); setViews(v); } })
+      .catch((e) => { if (alive) setErr(e.message); })
+      .finally(() => { if (alive) setLoading(false); });
+    return () => { alive = false; };
+  }, []);
+
+  const stats = useMemo(() => {
+    const now = new Date();
+    const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfWeek = new Date(startOfDay); startOfWeek.setDate(startOfDay.getDate() - startOfDay.getDay());
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const since = (dateStr, from) => new Date(dateStr) >= from;
+
+    const visitsToday = views.filter((v) => since(v.created_at, startOfDay)).length;
+    const visitsWeek = views.filter((v) => since(v.created_at, startOfWeek)).length;
+    const visitsMonth = views.filter((v) => since(v.created_at, startOfMonth)).length;
+
+    const salesToday = orders.filter((o) => since(o.created_at, startOfDay));
+    const salesMonth = orders.filter((o) => since(o.created_at, startOfMonth));
+    const revenueToday = salesToday.reduce((s, o) => s + (o.total || 0), 0);
+    const revenueMonth = salesMonth.reduce((s, o) => s + (o.total || 0), 0);
+
+    const productCount = {};
+    orders.forEach((o) => (o.items || []).forEach((it) => { productCount[it.name] = (productCount[it.name] || 0) + (it.qty || 0); }));
+    const topProducts = Object.entries(productCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+    const couponCount = {};
+    orders.forEach((o) => { if (o.coupon_code) couponCount[o.coupon_code] = (couponCount[o.coupon_code] || 0) + 1; });
+    const topCoupons = Object.entries(couponCount).sort((a, b) => b[1] - a[1]).slice(0, 5);
+
+    return {
+      visitsToday, visitsWeek, visitsMonth, visitsTotal: views.length,
+      totalSales: orders.length, salesToday: salesToday.length,
+      revenueToday, revenueMonth, topProducts, topCoupons,
+    };
+  }, [orders, views]);
+
+  const maxProductCount = stats.topProducts[0]?.[1] || 1;
+  const maxCouponCount = stats.topCoupons[0]?.[1] || 1;
+
+  if (loading) return <span className="mini-spinner" style={{ width: 22, height: 22, borderWidth: 3 }} />;
+  if (err) return <div className="tag-error">No se pudieron cargar las estadísticas: {err}</div>;
+
+  return (
+    <div className="stats-panel">
+      <div className="stats-grid">
+        <StatCard label="Visitas hoy" value={stats.visitsToday} />
+        <StatCard label="Visitas esta semana" value={stats.visitsWeek} />
+        <StatCard label="Visitas este mes" value={stats.visitsMonth} />
+        <StatCard label="Visitas totales" value={stats.visitsTotal} />
+        <StatCard label="Ventas totales" value={stats.totalSales} />
+        <StatCard label="Ventas hoy" value={stats.salesToday} />
+        <StatCard label="Facturación hoy" value={money(stats.revenueToday)} />
+        <StatCard label="Facturación del mes" value={money(stats.revenueMonth)} />
+      </div>
+
+      <div className="stats-cols">
+        <div className="stats-block">
+          <h3>Productos más vendidos</h3>
+          {stats.topProducts.length === 0 ? (
+            <p className="stats-empty">Todavía no hay ventas.</p>
+          ) : (
+            <div className="stats-bars">
+              {stats.topProducts.map(([name, count]) => (
+                <div className="stats-bar-row" key={name}>
+                  <span className="stats-bar-label">{name}</span>
+                  <div className="stats-bar-track"><div className="stats-bar-fill" style={{ width: `${(count / maxProductCount) * 100}%` }} /></div>
+                  <span className="stats-bar-value">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="stats-block">
+          <h3>Cupones más usados</h3>
+          {stats.topCoupons.length === 0 ? (
+            <p className="stats-empty">Todavía no se usó ningún cupón.</p>
+          ) : (
+            <div className="stats-bars">
+              {stats.topCoupons.map(([code, count]) => (
+                <div className="stats-bar-row" key={code}>
+                  <span className="stats-bar-label">{code}</span>
+                  <div className="stats-bar-track"><div className="stats-bar-fill" style={{ width: `${(count / maxCouponCount) * 100}%` }} /></div>
+                  <span className="stats-bar-value">{count}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="stats-block">
+        <h3>Ventas recientes</h3>
+        {orders.length === 0 ? (
+          <p className="stats-empty">Todavía no hay ventas registradas.</p>
+        ) : (
+          <div className="stats-table">
+            {orders.slice(0, 10).map((o) => (
+              <div className="stats-table-row" key={o.id}>
+                <span>{new Date(o.created_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</span>
+                <span>{o.buyer_name}</span>
+                <span>{o.payment_method === "mercadopago" ? "Mercado Pago" : "WhatsApp"}</span>
+                <span>{money(o.total)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="stats-block">
+        <h3>Visitantes recientes</h3>
+        {views.length === 0 ? (
+          <p className="stats-empty">Todavía no se registraron visitas.</p>
+        ) : (
+          <div className="stats-table">
+            {views.slice(0, 10).map((v) => (
+              <div className="stats-table-row stats-table-row-2" key={v.id}>
+                <span>{new Date(v.created_at).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}</span>
+                <span>{v.path || "/"}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AdminPage({ products, setProducts, onExit, content, categories, onSaveContent }) {
   const [tab, setTab] = useState("products");
   const [unlocked, setUnlocked] = useState(false);
@@ -651,6 +1090,7 @@ function AdminPage({ products, setProducts, onExit, content, categories, onSaveC
         name: updated.name, tipo: updated.tipo, category: updated.category,
         price: updated.price, stock: updated.stock, colors: updated.colors,
         sizes: updated.sizes, images: updated.images,
+        discount_percent: updated.discount_percent, discount_active: updated.discount_active,
       });
       setProducts((prev) => prev.map((p) => (p.id === id ? updated : p)));
     } catch (err) {
@@ -752,6 +1192,8 @@ function AdminPage({ products, setProducts, onExit, content, categories, onSaveC
 
       <div className="admin-tabs">
         <button className={`admin-tab ${tab === "products" ? "active" : ""}`} onClick={() => setTab("products")}>Productos</button>
+        <button className={`admin-tab ${tab === "promotions" ? "active" : ""}`} onClick={() => setTab("promotions")}>Promociones</button>
+        <button className={`admin-tab ${tab === "stats" ? "active" : ""}`} onClick={() => setTab("stats")}>Estadísticas</button>
         <button className={`admin-tab ${tab === "content" ? "active" : ""}`} onClick={() => setTab("content")}>Contenido del sitio</button>
       </div>
 
@@ -801,6 +1243,12 @@ function AdminPage({ products, setProducts, onExit, content, categories, onSaveC
         </>
       )}
 
+      {tab === "promotions" && (
+        <PromotionsPanel products={products} onSaveProduct={saveProduct} />
+      )}
+
+      {tab === "stats" && <StatsPanel />}
+
       {tab === "content" && (
         <SiteContentEditor content={content} categories={categories} onSave={onSaveContent} />
       )}
@@ -846,12 +1294,18 @@ export default function App() {
     setSiteContentRaw(newContent);
   };
 
+  useEffect(() => { trackPageView(); }, []);
+
   const [cart, setCart] = useState([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [bump, setBump] = useState(false);
+  const [coupon, setCoupon] = useState(null);
+  const [couponInput, setCouponInput] = useState("");
+  const [couponMsg, setCouponMsg] = useState(null);
+  const [couponLoading, setCouponLoading] = useState(false);
   const [view, setView] = useState(() => (window.location.hash === "#admin" ? "admin" : "store"));
   const [activeProduct, setActiveProduct] = useState(null);
-  const [buyer, setBuyer] = useState({ nombre: "", telefono: "", entrega: "envio", direccion: "", notas: "" });
+  const [buyer, setBuyer] = useState({ nombre: "", email: "", telefono: "", entrega: "envio", direccion: "", notas: "" });
   const [comprobante, setComprobante] = useState(null);
   const fileRef = useRef(null);
 
@@ -895,7 +1349,7 @@ export default function App() {
     setCart((prev) => {
       const existing = prev.find((i) => i.id === product.id && i.color === color && i.size === size);
       if (existing) return prev.map((i) => (i === existing ? { ...i, qty: i.qty + 1 } : i));
-      return [...prev, { id: product.id, name: product.name, price: product.price, color, size, qty: 1, image: image || (product.images || [])[0] }];
+      return [...prev, { id: product.id, name: product.name, price: finalPrice(product), color, size, qty: 1, image: image || (product.images || [])[0] }];
     });
     triggerBump();
   };
@@ -910,8 +1364,37 @@ export default function App() {
   const changeQty = (idx, delta) => setCart((prev) => prev.map((i, ix) => (ix === idx ? { ...i, qty: i.qty + delta } : i)).filter((i) => i.qty > 0));
   const removeItem = (idx) => setCart((prev) => prev.filter((_, ix) => ix !== idx));
 
-  const total = useMemo(() => cart.reduce((s, i) => s + i.price * i.qty, 0), [cart]);
+  const subtotal = useMemo(() => cart.reduce((s, i) => s + i.price * i.qty, 0), [cart]);
+  const couponDiscount = useMemo(() => (coupon ? Math.round(subtotal * coupon.percent / 100) : 0), [subtotal, coupon]);
+  const total = useMemo(() => Math.max(0, subtotal - couponDiscount), [subtotal, couponDiscount]);
   const count = useMemo(() => cart.reduce((s, i) => s + i.qty, 0), [cart]);
+
+  const applyCoupon = async () => {
+    const code = couponInput.trim();
+    if (!code) return;
+    setCouponLoading(true);
+    setCouponMsg(null);
+    try {
+      const found = await findCouponByCode(code);
+      const now = new Date();
+      const valid = found && found.active
+        && (!found.expires_at || new Date(found.expires_at) > now)
+        && (!found.max_uses || found.used_count < found.max_uses);
+      if (!valid) {
+        setCoupon(null);
+        setCouponMsg("El cupón ingresado no es válido.");
+      } else {
+        setCoupon({ id: found.id, code: found.code, percent: found.percent, usedCountAtApply: found.used_count || 0 });
+        setCouponMsg(null);
+      }
+    } catch {
+      setCoupon(null);
+      setCouponMsg("El cupón ingresado no es válido.");
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+  const removeCoupon = () => { setCoupon(null); setCouponInput(""); setCouponMsg(null); };
 
   const handleFile = (e) => {
     const file = e.target.files?.[0];
@@ -936,16 +1419,61 @@ export default function App() {
     return encodeURIComponent(joinLines(msg));
   };
 
+  const buyerIsValid = () => !!buyer.nombre && !!buyer.email && !!buyer.telefono && !(buyer.entrega === "envio" && !buyer.direccion);
+
+  const buildOrderPayload = (paymentMethod, paymentStatus) => ({
+    buyer_name: buyer.nombre,
+    buyer_email: buyer.email,
+    buyer_phone: buyer.telefono,
+    delivery_method: buyer.entrega,
+    shipping_address: buyer.entrega === "envio" ? buyer.direccion : null,
+    notes: buyer.notas || null,
+    items: cart.map((i) => ({
+      product_id: i.id, name: i.name, size: i.size, color: i.color,
+      qty: i.qty, unit_price: i.price, subtotal: i.price * i.qty, image: i.image || null,
+    })),
+    coupon_code: coupon ? coupon.code : null,
+    subtotal, discount: couponDiscount, total,
+    payment_method: paymentMethod,
+    payment_status: paymentStatus,
+  });
+
+  const registerSale = (paymentMethod, paymentStatus) => {
+    const order = buildOrderPayload(paymentMethod, paymentStatus);
+    insertOrder(order)
+      .then((saved) => notifyNewSale(saved))
+      .catch((err) => console.error("No se pudo registrar la venta:", err));
+    if (coupon) incrementCouponUsage(coupon.id, coupon.usedCountAtApply ?? 0).catch(() => {});
+  };
+
   const handleConfirm = (e) => {
     e.preventDefault();
-    if (!buyer.nombre || !buyer.telefono || (buyer.entrega === "envio" && !buyer.direccion)) return;
+    if (!buyerIsValid()) return;
     window.open(`https://wa.me/${CONFIG.whatsappNumber}?text=${buildMessage()}`, "_blank");
+    registerSale("whatsapp", "pendiente");
     setView("confirmed");
   };
 
+  const [mpLoading, setMpLoading] = useState(false);
+  const [mpError, setMpError] = useState(null);
+  const handleMercadoPago = async () => {
+    if (!buyerIsValid()) { setMpError("Completá tus datos de contacto antes de continuar."); return; }
+    setMpError(null);
+    setMpLoading(true);
+    try {
+      const initPoint = await createMercadoPagoPreference(buildOrderPayload("mercadopago", "pendiente"));
+      registerSale("mercadopago", "pendiente");
+      window.location.href = initPoint;
+    } catch (err) {
+      setMpError("No se pudo iniciar el pago con Mercado Pago: " + err.message);
+    } finally {
+      setMpLoading(false);
+    }
+  };
+
   const resetAll = () => {
-    setCart([]); setBuyer({ nombre: "", telefono: "", entrega: "envio", direccion: "", notas: "" });
-    setComprobante(null); goStore();
+    setCart([]); setBuyer({ nombre: "", email: "", telefono: "", entrega: "envio", direccion: "", notas: "" });
+    setComprobante(null); setCoupon(null); setCouponInput(""); setCouponMsg(null); goStore();
   };
 
   const filteredProducts = useMemo(() => (!categoryFilter ? products : products.filter((p) => p.category === categoryFilter)), [products, categoryFilter]);
@@ -987,8 +1515,6 @@ export default function App() {
   return (
     <div className="app">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400;0,6..96,500;0,6..96,600;0,6..96,700&family=Inter:wght@400;500;600&display=swap');
-
         :root{
           --cream:#F8F1E8; --blush:#F4D8C4; --sand:#E6D0B8; --oat:#E9D7C4;
           --clay:#D6B090; --clay-2:#D0A080; --taupe:#A68A72; --umber:#8B6A4D;
@@ -1190,6 +1716,10 @@ export default function App() {
         .pcard:hover .media-photo{ transform:scale(1.045); }
         .pcard-ref{ position:absolute; top:14px; right:14px; z-index:2; font-family:var(--serif); font-size:11px; letter-spacing:0.16em; text-transform:uppercase; color:rgba(248,241,232,0.85); }
         .stock-badge{ position:absolute; top:14px; left:14px; z-index:2; background:rgba(35,31,28,0.85); color:var(--cream); font-size:9px; letter-spacing:0.12em; text-transform:uppercase; padding:5px 9px; border-radius:20px; }
+        .stock-badge.off-badge{ background:var(--walnut); font-family:'Inter',sans-serif; font-weight:700; }
+        .pcard-media.is-out .media-photo, .pcard-media.is-out .editorial-photo{ filter:grayscale(0.35) brightness(0.92); }
+        .stock-band{ position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center; pointer-events:none; }
+        .stock-band span{ background:rgba(20,15,10,0.86); color:var(--cream); font-family:var(--serif); font-size:11px; letter-spacing:0.3em; text-transform:uppercase; padding:10px 22px; }
         .pcard-hover{ position:absolute; inset:0; z-index:2; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:12px; padding:18px 14px; text-align:center; background:linear-gradient(180deg, transparent 45%, rgba(20,15,10,0.62) 100%); opacity:0; transition:opacity .3s var(--ease); }
         .pcard:hover .pcard-hover{ opacity:1; }
         .pcard-hover-name{ font-family:var(--serif); font-size:16px; letter-spacing:0.04em; text-transform:uppercase; color:var(--cream); opacity:0; transform:translateY(6px); transition:opacity .3s var(--ease) .05s, transform .3s var(--ease) .05s; }
@@ -1203,21 +1733,28 @@ export default function App() {
         .pcard-name{ font-family:var(--serif); font-size:19px; text-transform:uppercase; letter-spacing:0.04em; margin:0 0 3px; color:var(--ink); }
         .pcard-tipo{ font-size:12px; opacity:0.65; margin-bottom:10px; }
         .pcard-bottom{ display:flex; justify-content:space-between; align-items:center; }
-        .pcard-price{ font-family:var(--serif); font-size:15px; color:var(--umber); letter-spacing:0.02em; }
         .pcard-colors{ display:flex; gap:5px; }
+        .price-tag{ display:inline-flex; align-items:baseline; gap:7px; font-family:var(--serif); color:var(--umber); letter-spacing:0.02em; }
+        .price-card{ font-size:15px; }
+        .price-lg{ font-size:22px; }
+        .price-old{ font-size:0.72em; color:var(--taupe); text-decoration:line-through; font-weight:400; }
+        .price-new{ color:var(--walnut); font-weight:600; }
+        .price-off-badge{ font-family:'Inter',sans-serif; font-size:10px; font-weight:700; letter-spacing:0.03em; color:var(--cream); background:var(--ink); padding:2px 8px; border-radius:20px; }
 
         .detail-wrap{ max-width:1200px; margin:0 auto; padding:130px 28px 80px; }
         .back-link{ display:flex; align-items:center; gap:6px; background:none; border:none; font-size:12px; letter-spacing:0.08em; color:var(--taupe); margin-bottom:36px; padding:0; }
         .detail-grid{ display:grid; grid-template-columns:1.1fr 1fr; gap:60px; }
-        .gallery-main{ height:520px; border-radius:18px; margin-bottom:14px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.12), 0 20px 40px -22px rgba(69,46,26,0.4); }
-        .gallery-main-img{ width:100%; height:520px; object-fit:cover; border-radius:18px; margin-bottom:14px; box-shadow:0 20px 40px -22px rgba(69,46,26,0.4); }
+        .gallery-media{ position:relative; margin-bottom:14px; border-radius:18px; overflow:hidden; }
+        .gallery-media.is-out .gallery-main-img{ filter:grayscale(0.3) brightness(0.94); }
+        .gallery-main{ height:520px; box-shadow:inset 0 1px 0 rgba(255,255,255,0.12), 0 20px 40px -22px rgba(69,46,26,0.4); }
+        .gallery-main-img{ display:block; width:100%; height:520px; object-fit:cover; box-shadow:0 20px 40px -22px rgba(69,46,26,0.4); }
         .gallery-thumbs{ display:flex; gap:12px; }
         .thumb{ width:74px; height:90px; border-radius:10px; border:2px solid transparent; opacity:0.6; transition:opacity .25s var(--ease), border-color .25s var(--ease); overflow:hidden; padding:0; box-shadow:0 6px 14px -10px rgba(69,46,26,0.35); }
         .thumb.active{ opacity:1; border-color:var(--ink); }
         .thumb.img-thumb img{ width:100%; height:100%; object-fit:cover; }
         .detail-name{ font-family:var(--serif); font-size:clamp(28px,5vw,38px); text-transform:uppercase; letter-spacing:0.04em; margin:4px 0 4px; }
         .detail-tipo{ font-size:14px; opacity:0.65; margin-bottom:14px; }
-        .detail-price{ font-family:var(--serif); font-size:22px; color:var(--umber); margin-bottom:30px; }
+        .detail-price{ margin-bottom:30px; }
         .add-cta{ position:relative; overflow:hidden; width:100%; border:none; color:var(--cream); padding:18px; font-size:11px; letter-spacing:0.18em; text-transform:uppercase; border-radius:14px; margin-top:8px; box-shadow:0 16px 30px -14px rgba(69,46,26,0.55), inset 0 1px 0 rgba(255,255,255,0.18); transition:transform .2s var(--ease), box-shadow .2s var(--ease); }
         .add-cta:hover:not(:disabled){ transform:translateY(-2px); box-shadow:0 20px 36px -14px rgba(69,46,26,0.6), inset 0 1px 0 rgba(255,255,255,0.18); }
         .add-cta:disabled{ opacity:0.45; }
@@ -1266,6 +1803,20 @@ export default function App() {
         .drawer-foot{ padding:22px 26px; border-top:1px solid var(--line); }
         .total-row{ display:flex; justify-content:space-between; margin-bottom:16px; font-size:14px; }
         .total-row strong{ font-family:var(--serif); font-size:19px; color:var(--ink); }
+        .total-breakdown{ margin-bottom:2px; }
+        .total-row.sub{ margin-bottom:8px; font-size:12.5px; opacity:0.72; }
+        .total-row.discount-row{ color:#8a5a3a; }
+        .coupon-box{ margin-bottom:16px; }
+        .coupon-row{ display:flex; gap:8px; }
+        .coupon-input{ flex:1; min-width:0; padding:11px 13px; border-radius:10px; border:1px solid var(--line); background:#fff; font-size:12.5px; font-family:inherit; color:var(--ink); }
+        .coupon-input:focus{ outline:none; border-color:var(--umber); }
+        .coupon-apply{ padding:0 16px; border-radius:10px; border:1px solid var(--ink); background:transparent; color:var(--ink); font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; transition:background .2s var(--ease), color .2s var(--ease); }
+        .coupon-apply:hover:not(:disabled){ background:var(--ink); color:var(--cream); }
+        .coupon-apply:disabled{ opacity:0.4; cursor:not-allowed; }
+        .coupon-error{ margin-top:8px; font-size:12px; color:#a4402c; }
+        .coupon-applied{ display:flex; align-items:center; justify-content:space-between; gap:10px; padding:10px 13px; border-radius:10px; background:rgba(214,176,144,0.28); font-size:12.5px; }
+        .coupon-remove{ background:none; border:none; text-decoration:underline; font-size:12px; color:var(--ink); opacity:0.7; }
+        .coupon-remove:hover{ opacity:1; }
         .checkout-btn{ position:relative; overflow:hidden; width:100%; color:var(--cream); border:none; padding:16px; font-size:11px; font-weight:600; border-radius:14px; letter-spacing:0.18em; text-transform:uppercase; box-shadow:0 16px 30px -14px rgba(69,46,26,0.55), inset 0 1px 0 rgba(255,255,255,0.18); transition:transform .2s var(--ease), box-shadow .2s var(--ease); }
         .checkout-btn > *{ position:relative; z-index:1; }
         .checkout-btn:hover:not(:disabled){ transform:translateY(-2px); }
@@ -1295,6 +1846,14 @@ export default function App() {
         .submit-btn:hover{ transform:translateY(-2px); }
         .submit-btn > *{ position:relative; z-index:1; }
         .whatsapp-note{ font-size:12px; color:var(--taupe); margin-top:14px; line-height:1.6; }
+        .pay-divider{ display:flex; align-items:center; gap:14px; margin:36px 0; }
+        .pay-divider::before, .pay-divider::after{ content:""; flex:1; height:1px; background:var(--line); }
+        .pay-divider span{ font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--taupe); }
+        .mp-box{ border:1px solid var(--line); border-radius:16px; padding:22px; margin-bottom:40px; }
+        .mp-box h3{ font-family:var(--serif); font-size:16px; text-transform:uppercase; letter-spacing:0.06em; margin:0 0 8px; }
+        .mp-btn{ width:100%; padding:16px; border-radius:14px; border:1.5px solid var(--ink); background:transparent; color:var(--ink); font-size:11px; font-weight:600; letter-spacing:0.18em; text-transform:uppercase; transition:background .2s var(--ease), color .2s var(--ease), transform .2s var(--ease); }
+        .mp-btn:hover:not(:disabled){ background:var(--ink); color:var(--cream); transform:translateY(-2px); }
+        .mp-btn:disabled{ opacity:0.5; cursor:not-allowed; }
 
         .confirmed-wrap{ max-width:480px; margin:0 auto; padding:150px 28px 100px; text-align:center; }
         .check-circle{ width:58px; height:58px; border-radius:50%; color:var(--cream); display:flex; align-items:center; justify-content:center; margin:0 auto 26px; }
@@ -1332,6 +1891,8 @@ export default function App() {
         .admin-fields-new{ grid-template-columns:repeat(4,1fr); }
         .admin-input{ border:1px solid var(--line); background:var(--paper); padding:9px 11px; font-size:12px; border-radius:12px; color:var(--ink); font-family:'Inter',sans-serif; }
         .admin-input:focus{ outline:none; border-color:var(--ink); }
+        .admin-check{ display:flex; align-items:center; gap:8px; font-size:12px; color:var(--ink); }
+        .admin-check input{ accent-color:var(--ink); width:15px; height:15px; }
         .admin-row-actions{ display:flex; flex-direction:column; gap:8px; }
         .admin-save{ display:flex; align-items:center; gap:6px; justify-content:center; background:var(--ink); color:var(--cream); border:none; padding:9px 14px; font-size:11px; letter-spacing:0.08em; text-transform:uppercase; border-radius:10px; box-shadow:0 8px 16px -10px rgba(69,46,26,0.45); transition:transform .2s var(--ease); }
         .admin-save:hover:not(:disabled){ transform:translateY(-1px); }
@@ -1349,6 +1910,47 @@ export default function App() {
         .admin-tab::after{ content:""; position:absolute; left:0; right:0; bottom:-1px; height:2px; background:var(--ink); transform:scaleX(0); transition:transform .25s var(--ease); }
         .admin-tab.active{ color:var(--ink); }
         .admin-tab.active::after{ transform:scaleX(1); }
+
+        /* ---------- Admin: promociones ---------- */
+        .promo-panel{ max-width:820px; }
+        .promo-subtabs{ display:flex; gap:10px; margin-bottom:28px; }
+        .promo-subtab{ display:flex; align-items:center; gap:7px; background:var(--oat); border:1px solid transparent; color:var(--taupe); padding:9px 16px; font-size:11.5px; letter-spacing:0.06em; text-transform:uppercase; border-radius:999px; transition:background .2s var(--ease), color .2s var(--ease); }
+        .promo-subtab.active{ background:var(--ink); color:var(--cream); }
+        .promo-block-title{ display:flex; align-items:center; gap:8px; font-family:var(--serif); font-size:18px; text-transform:uppercase; letter-spacing:0.05em; margin:0 0 6px; }
+        .promo-block .checkout-sub{ margin-bottom:24px; }
+        .coupon-list{ display:flex; flex-direction:column; gap:10px; margin-top:26px; }
+        .coupon-list-row{ display:flex; align-items:center; justify-content:space-between; gap:14px; border:1px solid var(--line); border-radius:14px; padding:13px 18px; background:var(--cream); flex-wrap:wrap; }
+        .coupon-list-info{ display:flex; align-items:center; gap:14px; flex-wrap:wrap; font-size:13px; }
+        .coupon-list-info strong{ font-family:var(--serif); font-size:16px; letter-spacing:0.03em; }
+        .coupon-meta{ font-size:11.5px; opacity:0.6; }
+        .coupon-list-actions{ display:flex; align-items:center; gap:10px; }
+        .coupon-toggle{ padding:7px 14px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--taupe); font-size:10.5px; letter-spacing:0.06em; text-transform:uppercase; transition:background .2s var(--ease), color .2s var(--ease), border-color .2s var(--ease); }
+        .coupon-toggle.on{ background:var(--ink); color:var(--cream); border-color:var(--ink); }
+        .promo-stock-list{ margin-top:22px; }
+        .promo-stock-head{ display:grid; grid-template-columns:1fr 100px 130px 110px; gap:14px; font-size:10.5px; letter-spacing:0.08em; text-transform:uppercase; opacity:0.55; padding:0 4px 10px; }
+        .promo-stock-row{ display:grid; grid-template-columns:1fr 100px 130px 110px; gap:14px; align-items:center; padding:10px 4px; border-top:1px solid var(--line); }
+        .promo-stock-name{ font-size:13px; }
+        .promo-stock-check{ justify-content:center; }
+
+        /* ---------- Admin: estadísticas ---------- */
+        .stats-panel{ max-width:1000px; }
+        .stats-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:36px; }
+        .stat-card{ display:flex; flex-direction:column; gap:6px; border:1px solid var(--line); border-radius:16px; padding:18px 20px; background:var(--cream); box-shadow:0 1px 0 rgba(255,255,255,0.5) inset, 0 10px 22px -16px rgba(69,46,26,0.3); }
+        .stat-card-value{ font-family:var(--serif); font-size:26px; color:var(--ink); }
+        .stat-card-label{ font-size:11px; letter-spacing:0.06em; text-transform:uppercase; color:var(--taupe); }
+        .stats-cols{ display:grid; grid-template-columns:1fr 1fr; gap:30px; margin-bottom:36px; }
+        .stats-block{ margin-bottom:36px; }
+        .stats-block h3{ font-family:var(--serif); font-size:16px; text-transform:uppercase; letter-spacing:0.05em; margin:0 0 16px; }
+        .stats-empty{ font-size:13px; opacity:0.6; }
+        .stats-bars{ display:flex; flex-direction:column; gap:12px; }
+        .stats-bar-row{ display:grid; grid-template-columns:110px 1fr 30px; gap:10px; align-items:center; font-size:12.5px; }
+        .stats-bar-label{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+        .stats-bar-track{ height:8px; border-radius:999px; background:var(--oat); overflow:hidden; }
+        .stats-bar-fill{ height:100%; border-radius:999px; background:var(--ink); }
+        .stats-bar-value{ text-align:right; opacity:0.7; }
+        .stats-table{ display:flex; flex-direction:column; gap:0; border-top:1px solid var(--line); }
+        .stats-table-row{ display:grid; grid-template-columns:150px 1fr 120px 100px; gap:14px; padding:10px 4px; border-bottom:1px solid var(--line); font-size:12.5px; align-items:center; }
+        .stats-table-row-2{ grid-template-columns:150px 1fr; }
         .content-editor{ max-width:760px; }
         .content-section{ border-top:1px solid var(--line); padding:26px 0; display:flex; flex-direction:column; gap:16px; }
         .content-section:first-of-type{ border-top:none; padding-top:6px; }
@@ -1374,6 +1976,14 @@ export default function App() {
           .admin-fields, .admin-fields-new{ grid-template-columns:1fr 1fr; }
           .content-benefit-row{ grid-template-columns:1fr; gap:6px; }
           .admin-tabs{ overflow-x:auto; }
+          .promo-stock-head{ display:none; }
+          .promo-stock-row{ grid-template-columns:1fr; gap:8px; padding:14px 4px; }
+          .promo-stock-check{ justify-content:flex-start; }
+          .coupon-list-row{ flex-direction:column; align-items:flex-start; }
+          .stats-grid{ grid-template-columns:1fr 1fr; }
+          .stats-cols{ grid-template-columns:1fr; gap:36px; }
+          .stats-table-row{ grid-template-columns:1fr 1fr; row-gap:4px; }
+          .stats-table-row-2{ grid-template-columns:1fr 1fr; }
           .discover-hero{ grid-template-columns:1fr; }
           .discover-hero-photo{ min-height:340px; border-radius:28px 28px 0 0; }
           .discover-hero-panel{ border-radius:0 0 28px 28px; padding:44px 32px; align-items:flex-start; }
@@ -1412,7 +2022,7 @@ export default function App() {
           .pcard-info{ padding-top:10px; }
           .pcard-name{ font-size:15px; }
           .pcard-tipo{ font-size:11px; margin-bottom:6px; }
-          .pcard-price{ font-size:13px; }
+          .price-card{ font-size:13px; }
           .pcard-hover{ padding:12px 10px; gap:8px; }
           .pcard-hover-name{ font-size:13px; }
           .quick-add{ padding:9px 12px; font-size:9px; width:100%; justify-content:center; }
@@ -1659,11 +2269,18 @@ export default function App() {
             <div className="bank-row"><span>Titular</span><span>{CONFIG.bank.titular}</span></div>
             <div className="bank-row"><span>Alias</span><span>{CONFIG.bank.alias}</span></div>
             <div className="bank-row"><span>CBU</span><span>{CONFIG.bank.cbu}</span></div>
+            {coupon && (
+              <>
+                <div className="bank-row"><span>Subtotal</span><span>{money(subtotal)}</span></div>
+                <div className="bank-row"><span>Cupón {coupon.code} (-{coupon.percent}%)</span><span>-{money(couponDiscount)}</span></div>
+              </>
+            )}
             <div className="bank-row"><span>Total a transferir</span><span>{money(total)}</span></div>
           </div>
 
           <form onSubmit={handleConfirm}>
             <div className="field"><label>Nombre y apellido</label><input value={buyer.nombre} onChange={(e) => setBuyer({ ...buyer, nombre: e.target.value })} placeholder="Ej: Julieta Gómez" required /></div>
+            <div className="field"><label>Email de contacto</label><input type="email" value={buyer.email} onChange={(e) => setBuyer({ ...buyer, email: e.target.value })} placeholder="Ej: julieta@mail.com" required /></div>
             <div className="field"><label>Teléfono de contacto</label><input value={buyer.telefono} onChange={(e) => setBuyer({ ...buyer, telefono: e.target.value })} placeholder="Ej: 221 5 123456" required /></div>
             <div className="field">
               <label>Forma de entrega</label>
@@ -1696,6 +2313,19 @@ export default function App() {
               manualmente en ese mismo chat.
             </p>
           </form>
+
+          <div className="pay-divider"><span>o</span></div>
+
+          <div className="mp-box">
+            <h3>Pagar con Mercado Pago</h3>
+            <p className="checkout-sub" style={{ marginBottom: 16 }}>
+              Te lleva directo a Mercado Pago con el total de tu compra ({money(total)}) para que confirmes el pago sin transferir manualmente.
+            </p>
+            {mpError && <div className="tag-error" style={{ marginBottom: 14 }}>{mpError}</div>}
+            <button type="button" className="mp-btn" disabled={mpLoading} onClick={handleMercadoPago}>
+              {mpLoading ? "Abriendo Mercado Pago…" : "Pagar con Mercado Pago"}
+            </button>
+          </div>
         </div>
       )}
 
@@ -1751,7 +2381,39 @@ export default function App() {
               ))}
             </div>
             <div className="drawer-foot">
-              <div className="total-row"><span>Total</span><strong>{money(total)}</strong></div>
+              {cart.length > 0 && (
+                <div className="coupon-box">
+                  {!coupon ? (
+                    <>
+                      <div className="coupon-row">
+                        <input
+                          className="coupon-input"
+                          placeholder="Ingresar cupón de descuento"
+                          value={couponInput}
+                          onChange={(e) => setCouponInput(e.target.value)}
+                          onKeyDown={(e) => e.key === "Enter" && applyCoupon()}
+                        />
+                        <button className="coupon-apply" onClick={applyCoupon} disabled={couponLoading || !couponInput.trim()}>
+                          {couponLoading ? "..." : "Aplicar"}
+                        </button>
+                      </div>
+                      {couponMsg && <div className="coupon-error">{couponMsg}</div>}
+                    </>
+                  ) : (
+                    <div className="coupon-applied">
+                      <span>Cupón <strong>{coupon.code}</strong> aplicado (-{coupon.percent}%)</span>
+                      <button className="coupon-remove" onClick={removeCoupon}>Quitar</button>
+                    </div>
+                  )}
+                </div>
+              )}
+              <div className="total-breakdown">
+                <div className="total-row sub"><span>Subtotal</span><span>{money(subtotal)}</span></div>
+                {coupon && (
+                  <div className="total-row sub discount-row"><span>Descuento ({coupon.percent}%)</span><span>-{money(couponDiscount)}</span></div>
+                )}
+                <div className="total-row"><span>Total</span><strong>{money(total)}</strong></div>
+              </div>
               <button className="checkout-btn leather" disabled={cart.length === 0} onClick={() => { setCartOpen(false); setView("checkout"); }}>
                 <span>Ir a finalizar pedido</span>
               </button>
